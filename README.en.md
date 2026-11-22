@@ -8,6 +8,8 @@ the Spotify queue), weather, volume, battery, Wi-Fi and Bluetooth — all in one
 
 Built with Tauri 2 (Rust) + React + TypeScript. Free and open source (MIT).
 
+![Dockora demo](docs/screenshots/demo.gif)
+
 ![Dockora dock](docs/screenshots/dock.png)
 
 <p align="center">
@@ -19,6 +21,8 @@ Built with Tauri 2 (Rust) + React + TypeScript. Free and open source (MIT).
   <img src="docs/screenshots/calendar.png" alt="Calendar" width="58%">
   <img src="docs/screenshots/volume.png" alt="Volume" width="38%">
 </p>
+
+> If you like it, a ⭐ (top right) helps more people find the project.
 
 ## Features
 

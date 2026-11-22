@@ -6,6 +6,8 @@
 geçen, cam görünümlü bir dock. Açık uygulamalar, saat ve takvim, müzik (Spotify
 sıradakiler dahil), hava durumu, ses, pil, Wi-Fi ve Bluetooth tek çubukta.
 
+![Dockora tanıtım](docs/screenshots/demo.gif)
+
 ![Dockora dock](docs/screenshots/dock.png)
 
 <p align="center">
@@ -17,6 +19,8 @@ sıradakiler dahil), hava durumu, ses, pil, Wi-Fi ve Bluetooth tek çubukta.
   <img src="docs/screenshots/calendar.png" alt="Takvim" width="58%">
   <img src="docs/screenshots/volume.png" alt="Ses" width="38%">
 </p>
+
+> Beğendiysen sağ üstten ⭐ vermeyi unutma; projenin daha çok kişiye ulaşmasına yardım ediyor.
 
 ## Kurulum
 
