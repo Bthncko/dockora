@@ -35,13 +35,9 @@ pub fn english() -> bool {
     ENGLISH.load(Ordering::SeqCst)
 }
 
-/// Uygulamanın görünen adı: Türkçede "Akıllı Dock", İngilizcede "Dockora".
+/// Uygulamanın görünen adı (her dilde aynı).
 pub fn app_name() -> &'static str {
-    if english() {
-        "Dockora"
-    } else {
-        "Akıllı Dock"
-    }
+    "Dockora"
 }
 
 /// Türkçe kaynak metin → seçili dildeki karşılığı.
@@ -92,7 +88,7 @@ mod tests {
         assert!(!set("en"), "aynı dil: değişmedi");
         assert!(set("tr"), "dil değişti");
         assert_eq!(t("Çıkış"), "Çıkış");
-        assert_eq!(app_name(), "Akıllı Dock");
+        assert_eq!(app_name(), "Dockora");
         // Çevirisi olmayan metin olduğu gibi döner.
         set("en");
         assert_eq!(t("Başka bir şey"), "Başka bir şey");

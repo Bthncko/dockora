@@ -2,7 +2,7 @@
 
 🇹🇷 Türkçe · [🇬🇧 English](README.en.md)
 
-**Dockora** (uygulamadaki adıyla **Akıllı Dock**), Windows 11 görev çubuğunun yerine
+**Dockora**, Windows 11 görev çubuğunun yerine
 geçen, cam görünümlü bir dock. Açık uygulamalar, saat ve takvim, müzik (Spotify
 sıradakiler dahil), hava durumu, ses, pil, Wi-Fi ve Bluetooth tek çubukta.
 
@@ -47,7 +47,6 @@ sıradakiler dahil), hava durumu, ses, pil, Wi-Fi ve Bluetooth tek çubukta.
 Dil varsayılan olarak Windows'un görüntüleme dilini izler (Türkçe Windows'ta Türkçe,
 diğerlerinde İngilizce). **Ayarlar → Genel → Dil** bölümünden istediğin zaman
 değiştirebilirsin; dock, panelleri, tepsi menüsü ve bildirimler hemen yeni dile geçer.
-İngilizce arayüzde uygulamanın adı **Dockora**, Türkçede **Akıllı Dock** olarak görünür.
 
 Yeni bir dil eklemek istersen arayüz metinleri iki yerde: dock ve ayarlar için
 [`src/locales/en.ts`](src/locales/en.ts) (kaynak metin Türkçe, her satır bir çeviriye
@@ -75,10 +74,10 @@ Ayarlar → Müzik sayfasında. İki yol var:
 ## Sorun olursa
 
 - **Görev çubuğu kayboldu, geri gelmiyor:** Görev Yöneticisi'nde (Ctrl+Shift+Esc)
-  "Akilli Dock"u kapat; çubuk geri gelir. Gelmezse
+  "Dockora"yı kapat; çubuk geri gelir. Gelmezse
   [restore-taskbar.ps1](scripts/restore-taskbar.ps1) dosyasını indirip sağ tıkla →
   **PowerShell ile çalıştır**.
-- **Kaldırmak:** Windows Ayarlar → Uygulamalar → Yüklü uygulamalar → Akilli Dock →
+- **Kaldırmak:** Windows Ayarlar → Uygulamalar → Yüklü uygulamalar → Dockora →
   Kaldır.
 
 ## Gizlilik

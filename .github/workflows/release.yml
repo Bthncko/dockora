@@ -40,10 +40,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: "Akıllı Dock ${{ github.ref_name }}"
+          releaseName: "Dockora ${{ github.ref_name }}"
           releaseBody: |
             **Kurulum:** aşağıdaki `..._x64-setup.exe` dosyasını indirip çalıştır.
-            Akıllı Dock zaten kuruluysa bu sürüm kendiliğinden gelir.
+            Dockora zaten kuruluysa bu sürüm kendiliğinden gelir.
           releaseDraft: false
           prerelease: false
           updaterJsonPreferNsis: true

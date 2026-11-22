@@ -1,4 +1,4 @@
-# Akıllı Dock — Uygulama Planı
+# Dockora — Uygulama Planı
 
 Windows 11 görev çubuğunun yerine geçen, kişisel kullanım için bir dock.
 Yığın: **Tauri 2 + Rust + React + TypeScript + Vite**.

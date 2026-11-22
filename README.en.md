@@ -2,7 +2,7 @@
 
 🇬🇧 English · [🇹🇷 Türkçe](README.md)
 
-**Dockora** (called **Akıllı Dock**, "Smart Dock", in the Turkish interface) is a glass-style dock
+**Dockora** is a glass-style dock
 that replaces the Windows 11 taskbar. Open apps, clock and calendar, music (including
 the Spotify queue), weather, volume, battery, Wi-Fi and Bluetooth — all in one bar.
 
@@ -88,11 +88,11 @@ Spotify Premium and a Spotify developer app; the steps are in Settings → Music
 
 ## Troubleshooting
 
-- **The taskbar disappeared and won't come back:** close "Akilli Dock" in Task
+- **The taskbar disappeared and won't come back:** close "Dockora" in Task
   Manager (Ctrl+Shift+Esc). If it still doesn't return, download
   [restore-taskbar.ps1](scripts/restore-taskbar.ps1), right-click it →
   **Run with PowerShell**.
-- **Uninstall:** Windows Settings → Apps → Installed apps → Akilli Dock → Uninstall.
+- **Uninstall:** Windows Settings → Apps → Installed apps → Dockora → Uninstall.
 
 ## Privacy
 

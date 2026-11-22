@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "dock",
-        "title": "Akıllı Dock",
+        "title": "Dockora",
         "width": 1280,
         "height": 56,
         "decorations": false,
@@ -29,7 +29,7 @@
       },
       {
         "label": "preview",
-        "title": "Akıllı Dock Önizleme",
+        "title": "Dockora Önizleme",
         "width": 300,
         "height": 200,
         "decorations": false,
@@ -45,7 +45,7 @@
       },
       {
         "label": "notify",
-        "title": "Akıllı Dock Bildirimler",
+        "title": "Dockora Bildirimler",
         "width": 392,
         "height": 120,
         "decorations": false,
@@ -61,7 +61,7 @@
       },
       {
         "label": "popup",
-        "title": "Akıllı Dock Panel",
+        "title": "Dockora Panel",
         "width": 340,
         "height": 400,
         "decorations": false,
@@ -94,7 +94,7 @@
     ],
     "createUpdaterArtifacts": true,
     "publisher": "Bthncko",
-    "shortDescription": "Akıllı Dock",
+    "shortDescription": "Dockora",
     "windows": {
       "nsis": {
         "installMode": "currentUser",

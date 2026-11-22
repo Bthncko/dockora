@@ -1,4 +1,4 @@
-//! Akıllı Dock — yalnızca Windows 11 için.
+//! Dockora — yalnızca Windows 11 için.
 
 mod commands;
 mod config;
@@ -263,7 +263,7 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("Akıllı Dock başlatılamadı");
+        .expect("Dockora başlatılamadı");
 
     app.run(|_app, event| {
         if let RunEvent::Exit = event {

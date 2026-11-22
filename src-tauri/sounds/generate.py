@@ -1,4 +1,4 @@
-"""Akıllı Dock bildirim sesleri: sıfırdan sentez (örnek / kayıt yok).
+"""Dockora bildirim sesleri: sıfırdan sentez (örnek / kayıt yok).
 
 Kısa, yumuşak, yuvarlak tınılar; tık yok (yumuşak atak, sönümlü bitiş), hafif
 oda yankısı. Hepsi aynı algılanan yükseklikte, Windows'unkilerden sessiz.

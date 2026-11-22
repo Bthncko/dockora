@@ -94,7 +94,7 @@ export function tc(context: string, tr: string): string {
 }
 
 /** Uygulamanın görünen adı (Rust'taki `app_name` ile aynı). */
-export const appName = () => (lang === "en" ? "Dockora" : "Akıllı Dock");
+export const appName = () => "Dockora";
 
 // --- yerel biçimler ---------------------------------------------------------------
 

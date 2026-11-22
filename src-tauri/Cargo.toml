@@ -1,7 +1,7 @@
 [package]
 name = "akilli-dock"
 version = "0.3.0"
-description = "Akilli Dock"
+description = "Dockora"
 authors = []
 edition = "2024"
 

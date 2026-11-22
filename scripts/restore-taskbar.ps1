@@ -1,9 +1,9 @@
 ﻿<#
 .SYNOPSIS
-  Akıllı Dock çökerse ya da öldürülürse Windows görev çubuğunu geri getirir.
+  Dockora çökerse ya da öldürülürse Windows görev çubuğunu geri getirir.
 
 .DESCRIPTION
-  1. Çalışan Akıllı Dock'u kapatır (yoksa çubuğu yeniden gizler).
+  1. Çalışan Dockora'u kapatır (yoksa çubuğu yeniden gizler).
   2. Windows görev çubuklarını (ana + ikinci monitörler) yeniden gösterir ve
      dock'un verdiği boş pencere bölgesini kaldırır.
   3. Dock'un kaydettiği eski otomatik gizleme durumunu geri yükler
@@ -82,7 +82,7 @@ $stateFile = Join-Path $env:APPDATA 'com.proxd.akillidock\taskbar-state.json'
 # 1) Dock açıksa kapat; yoksa çubuğu hemen yeniden gizler.
 $dock = Get-Process -Name 'akilli-dock' -ErrorAction SilentlyContinue
 if ($dock) {
-  Write-Host "Akıllı Dock kapatılıyor (PID $($dock.Id -join ', '))..."
+  Write-Host "Dockora kapatılıyor (PID $($dock.Id -join ', '))..."
   $dock | Stop-Process -Force
   Start-Sleep -Milliseconds 500
 }
