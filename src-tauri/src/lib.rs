@@ -168,6 +168,7 @@ pub fn run() {
             commands::wifi_connect,
             commands::wifi_disconnect,
             commands::bt_devices,
+            commands::bt_set_connected,
             commands::set_radio,
         ])
         // Tüm menü olayları (tepsi + sağ tık menüleri) buraya gelir.

@@ -514,7 +514,7 @@ pub fn open_task_manager() -> CmdResult {
 
 /// Tepsi düğmesi (8.6): Windows'un taşma penceresini açar, düğmenin üstüne taşır.
 #[tauri::command]
-pub async fn open_tray(app: AppHandle, anchor: crate::win::tray::Anchor) -> CmdResult {
+pub async fn open_tray(app: AppHandle, anchor: Option<crate::win::tray::Anchor>) -> CmdResult {
     tauri::async_runtime::spawn_blocking(move || crate::win::tray::open(&app, anchor))
         .await
         .map_err(|e| e.to_string())?
@@ -659,6 +659,20 @@ pub async fn wifi_disconnect(radios: State<'_, RadiosService>) -> CmdResult {
 #[tauri::command]
 pub async fn bt_devices() -> CmdResult<Vec<wireless::BtDevice>> {
     blocking_str(wireless::bt_devices).await
+}
+
+/// Eşleşmiş Bluetooth aygıtını bağlar / ayırır. Hata "use_settings" ise panel
+/// Windows ayarlarını açar. Bitince radyo servisi tazelenir.
+#[tauri::command]
+pub async fn bt_set_connected(
+    radios: State<'_, RadiosService>,
+    id: String,
+    le: bool,
+    connect: bool,
+) -> CmdResult {
+    let result = blocking_str(move || wireless::bt_set_connected(&id, le, connect)).await;
+    radios.wake();
+    result
 }
 
 /// Güç modu (pil paneli): değiştir ve pil servisini hemen okut.

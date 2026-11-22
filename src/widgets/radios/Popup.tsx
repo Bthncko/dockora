@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { commands, events, report, type BtDevice, type WifiNetwork } from "../../lib/ipc";
 import { useService } from "../../lib/useService";
 import { Toggle } from "../../windows/settings/controls";
@@ -287,12 +287,40 @@ function BluetoothPanel() {
   const openSettings = useSettings("bluetooth");
   const [devices, setDevices] = useState<BtDevice[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /** Bağlanma / ayrılma süren aygıt kimliği ve son işlem hatası. */
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<{ id: string; msg: string } | null>(null);
   const on = !!bt?.on;
+  const busyRef = useRef(false);
+  useEffect(() => {
+    busyRef.current = busyId !== null;
+  }, [busyId]);
+
+  const toggleDevice = (d: BtDevice) => {
+    if (busyId) return;
+    setBusyId(d.id);
+    setActionError(null);
+    commands
+      .btSetConnected(d.id, d.le, !d.connected)
+      .catch((e) => {
+        const msg = errText(e);
+        if (msg === "use_settings") openSettings();
+        else setActionError({ id: d.id, msg });
+      })
+      .finally(() => {
+        setBusyId(null);
+        commands
+          .btDevices()
+          .then(setDevices)
+          .catch(() => {});
+      });
+  };
 
   useEffect(() => {
     if (!on) return;
     let alive = true;
     const load = () =>
+      !busyRef.current &&
       commands
         .btDevices()
         .then((d) => {
@@ -341,22 +369,35 @@ function BluetoothPanel() {
           {devices.map((d) => {
             const Icon = BT_ICONS[d.kind];
             return (
-              <li key={d.name}>
+              <li key={d.id}>
                 <button
                   type="button"
                   className={styles.row}
                   data-active={d.connected || undefined}
-                  title={t("Bağlamak ya da ayırmak için Windows Bluetooth ayarlarını açar")}
-                  onClick={openSettings}
+                  aria-busy={busyId === d.id || undefined}
+                  disabled={busyId !== null && busyId !== d.id}
+                  title={d.connected ? t("Bağlantıyı kes") : t("Bağlan")}
+                  onClick={() => toggleDevice(d)}
                 >
                   <span className={styles.icon}>
                     <Icon size={18} />
                   </span>
                   <span className={styles.text}>
                     <span className={styles.name}>{d.name}</span>
-                    <span className={styles.sub}>{d.connected ? t("Bağlı") : t("Eşleşmiş")}</span>
+                    <span className={styles.sub}>
+                      {busyId === d.id
+                        ? d.connected
+                          ? t("Ayrılıyor…")
+                          : t("Bağlanıyor…")
+                        : d.connected
+                          ? t("Bağlı")
+                          : t("Eşleşmiş")}
+                    </span>
                   </span>
                 </button>
+                {actionError?.id === d.id && (
+                  <p className={styles.errorText}>{t(actionError.msg)}</p>
+                )}
               </li>
             );
           })}

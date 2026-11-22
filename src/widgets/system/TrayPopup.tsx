@@ -18,7 +18,7 @@ export function TrayPopup() {
 
   const windowsTray = () => {
     close();
-    commands.systemShortcut("tray").catch(report("system_shortcut"));
+    commands.openTray().catch(report("open_tray"));
   };
 
   const icons = tray?.icons ?? [];

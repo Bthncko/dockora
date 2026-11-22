@@ -254,6 +254,7 @@ export const EN: Record<string, string> = {
   "Windows ayarlarında bağlan": "Connect in Windows settings",
   "Ağ şifresi": "Network password",
   "Bağlanıyor…": "Connecting…",
+  "Ayrılıyor…": "Disconnecting…",
   Bağlan: "Connect",
   "Bluetooth yok.": "No Bluetooth.",
   "Bluetooth kapalı.": "Bluetooth is off.",

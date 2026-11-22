@@ -1,0 +1,87 @@
+/* Yalnız transform/opacity. Hareket azaltılınca global.css animasyonları 1 ms'ye
+   indirir (dolgu kipi yok → durağan hâle döner), burada ayrıca iş yok. */
+.crab {
+  flex: none;
+  overflow: visible;
+  animation: shuffle 11s ease-in-out infinite;
+}
+
+.eyes,
+.pincer,
+.clawL,
+.clawR,
+.legs {
+  transform-box: fill-box;
+}
+
+.eyes {
+  transform-origin: center;
+  animation: blink 5s infinite;
+}
+
+.pincer {
+  animation: snap 7s infinite;
+}
+
+.clawL {
+  transform-origin: right center;
+}
+
+.clawR {
+  transform-origin: left center;
+}
+
+.legs {
+  transform-origin: center top;
+  animation: scuttle 11s steps(1, end) infinite;
+}
+
+@keyframes shuffle {
+  0%, 62%, 100% { transform: translate(0, 0); }
+  66% { transform: translate(-1px, 0); }
+  72% { transform: translate(-1px, -1px); }
+  76% { transform: translate(-1px, 0); }
+  86% { transform: translate(1px, 0); }
+  92% { transform: translate(0, 0); }
+}
+
+@keyframes blink {
+  0%, 92%, 100% { transform: scaleY(1); }
+  95% { transform: scaleY(0.15); }
+}
+
+@keyframes snap {
+  0%, 20%, 28%, 100% { transform: translateY(0); }
+  22%, 26% { transform: translateY(-1px); }
+  24% { transform: translateY(-1px); }
+}
+
+@keyframes scuttle {
+  0%, 62%, 100% { transform: scaleX(1); }
+  66%, 76% { transform: scaleX(0.9); }
+  70%, 80% { transform: scaleX(1); }
+}
+
+/* Üzerine gelince biraz daha hareketli. */
+:hover > .crab {
+  animation: wiggle 0.9s ease-in-out infinite;
+}
+
+:hover > .crab .eyes {
+  animation-duration: 2.4s;
+}
+
+:hover > .crab .pincer {
+  animation: snapFast 0.6s infinite;
+}
+
+@keyframes wiggle {
+  0%, 100% { transform: rotate(0) translateY(0); }
+  25% { transform: rotate(-4deg) translateY(-1px); }
+  75% { transform: rotate(4deg) translateY(-1px); }
+}
+
+@keyframes snapFast {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-1px); }
+}

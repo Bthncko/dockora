@@ -1,10 +1,10 @@
 import { commands, events } from "../../lib/ipc";
 import { togglePopup } from "../../lib/popup";
 import { useService } from "../../lib/useService";
-import { SparkleIcon } from "../icons";
 import { Meter, Tile } from "../ui";
 import { current, remaining, resetTime, useMinute } from "./format";
 import styles from "./Bar.module.css";
+import { Crab } from "./Crab";
 import { pct, t } from "../../lib/i18n";
 
 /**
@@ -40,7 +40,7 @@ export function AiUsageBar() {
       })}
       onClick={(e) => togglePopup("aiUsage", e.currentTarget)}
     >
-      <SparkleIcon size={16} className={styles.icon} />
+      <Crab className={styles.icon} />
       <span className={styles.rows}>
         <Row label={t("Oturum")} limit={session} />
         <Row label={t("Hafta")} limit={weekly} />

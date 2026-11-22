@@ -7,8 +7,12 @@
 //! Windows'un Wi-Fi sayfasını açar.
 //!
 //! Bluetooth: eşleşmiş aygıtlar ve bağlantı durumu (`BluetoothDevice`,
-//! `BluetoothLEDevice`). Eşleşmiş bir aygıtı bağlamanın / ayırmanın açık bir
-//! API'si yok; panel bunun için Windows'un Bluetooth sayfasını açar.
+//! `BluetoothLEDevice`). Klasik aygıtlar (kulaklık, hoparlör, klavye) için
+//! `BluetoothSetServiceState` (Win32, bthprops) ile ses/HID hizmetleri
+//! açılıp kapatılarak bağlanır / ayrılır. (`AudioPlaybackConnection` tersine,
+//! PC'yi hoparlör yapar; kulaklığa bağlanmak için uygun değildir.) Yalnızca-LE
+//! aygıt GATT hizmetleri sorgulanarak bağlanır; ayrılması mümkün değilse
+//! "use_settings" hatası döner ve panel Windows ayarlarını açar.
 //!
 //! İşlevler engelleyicidir (tarama birkaç saniye sürer): komutlar ayrı iş
 //! parçacığında çağırır. Ağ adları ve aygıt adları günlüğe yazılmaz.
@@ -16,13 +20,18 @@
 use std::collections::HashMap;
 
 use serde::Serialize;
+use windows::Devices::Bluetooth::BluetoothCacheMode;
+use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
 use windows::Devices::Bluetooth::{BluetoothConnectionStatus, BluetoothDevice, BluetoothLEDevice};
 use windows::Devices::Enumeration::DeviceInformation;
 use windows::Devices::WiFi::{WiFiAdapter, WiFiConnectionStatus, WiFiReconnectionKind};
 use windows::Networking::Connectivity::{NetworkAuthenticationType, NetworkInformation};
 use windows::Security::Credentials::PasswordCredential;
+use windows::Win32::Devices::Bluetooth::{
+    BLUETOOTH_DEVICE_INFO, BluetoothGetDeviceInfo, BluetoothSetServiceState,
+};
 use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
-use windows::core::HSTRING;
+use windows::core::{GUID, HSTRING};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +55,10 @@ pub struct BtDevice {
     pub connected: bool,
     /// "audio", "input", "phone" ya da "other" (ikon için).
     pub kind: &'static str,
+    /// `DeviceInformation` kimliği (bağlanmak için).
+    pub id: String,
+    /// Yalnızca düşük enerjili (LE) aygıt.
+    pub le: bool,
 }
 
 fn com() {
@@ -220,6 +233,8 @@ pub fn bt_devices() -> Result<Vec<BtDevice>, String> {
             name: device.Name().map(|n| n.to_string()).unwrap_or_default(),
             connected: device.ConnectionStatus() == Ok(BluetoothConnectionStatus::Connected),
             kind,
+            id: id.to_string(),
+            le: false,
         });
     }
     if let Ok(le) = BluetoothLEDevice::GetDeviceSelectorFromPairingState(true)
@@ -242,6 +257,8 @@ pub fn bt_devices() -> Result<Vec<BtDevice>, String> {
                 name,
                 connected,
                 kind: "input",
+                id: id.to_string(),
+                le: true,
             });
         }
     }
@@ -252,4 +269,86 @@ pub fn bt_devices() -> Result<Vec<BtDevice>, String> {
             .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
     });
     Ok(out)
+}
+
+/// Klasik Bluetooth'ta ses / hands-free / HID hizmetleri (UUID kısa biçimleri).
+const BT_SERVICES: [u32; 5] = [0x110B, 0x1108, 0x111E, 0x1124, 0x110E];
+const SERVICE_DISABLE: u32 = 0;
+const SERVICE_ENABLE: u32 = 1;
+
+fn bt_uuid(short: u32) -> GUID {
+    GUID::from_u128(((short as u128) << 96) | 0x0000_1000_8000_0080_5F9B_34FB)
+}
+
+/// Eşleşmiş bir aygıtı bağlar (`connect`) ya da ayırır. Engelleyicidir (birkaç sn).
+pub fn bt_set_connected(id: &str, le: bool, connect: bool) -> Result<(), String> {
+    com();
+    let id = HSTRING::from(id);
+    if le {
+        return bt_le_connect(&id, connect);
+    }
+    let device = BluetoothDevice::FromIdAsync(&id)
+        .and_then(|o| o.join())
+        .map_err(|e| e.message())?;
+    let address = device.BluetoothAddress().map_err(|e| e.message())?;
+    let mut info = BLUETOOTH_DEVICE_INFO {
+        dwSize: std::mem::size_of::<BLUETOOTH_DEVICE_INFO>() as u32,
+        ..Default::default()
+    };
+    info.Address.Anonymous.ullLong = address;
+    // Sınıf / ad bilgisini doldurur; başarısızsa yine de denenir.
+    unsafe { BluetoothGetDeviceInfo(None, &mut info) };
+    let flag = if connect {
+        SERVICE_ENABLE
+    } else {
+        SERVICE_DISABLE
+    };
+    let mut ok = false;
+    for short in BT_SERVICES {
+        let guid = bt_uuid(short);
+        // 0 = ERROR_SUCCESS; aygıtın desteklemediği hizmet hata verir, atlanır.
+        if unsafe { BluetoothSetServiceState(None, &info, &guid, flag) } == 0 {
+            ok = true;
+        }
+    }
+    if !ok {
+        return Err(if connect {
+            "Bağlanılamadı".into()
+        } else {
+            "use_settings".into()
+        });
+    }
+    if connect {
+        // Bağlantı kurulması birkaç saniye sürebilir.
+        for _ in 0..20 {
+            if device.ConnectionStatus() == Ok(BluetoothConnectionStatus::Connected) {
+                return Ok(());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        return Err("Bağlanılamadı".into());
+    }
+    Ok(())
+}
+
+/// LE aygıtta hizmetleri önbelleksiz sorgulamak bağlantıyı tetikler.
+fn bt_le_connect(id: &HSTRING, connect: bool) -> Result<(), String> {
+    if !connect {
+        return Err("use_settings".into());
+    }
+    let device = BluetoothLEDevice::FromIdAsync(id)
+        .and_then(|o| o.join())
+        .map_err(|e| e.message())?;
+    let status = device
+        .GetGattServicesWithCacheModeAsync(BluetoothCacheMode::Uncached)
+        .and_then(|o| o.join())
+        .and_then(|r| r.Status())
+        .map_err(|e| e.message())?;
+    if status == GattCommunicationStatus::Success
+        && device.ConnectionStatus() == Ok(BluetoothConnectionStatus::Connected)
+    {
+        Ok(())
+    } else {
+        Err("Bağlanılamadı".into())
+    }
 }

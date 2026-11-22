@@ -59,7 +59,7 @@ const TIMER_REBROADCAST: usize = 2;
 const WATCH_MS: u32 = 250;
 const STARTUP_RESYNC_MS: u32 = 3000;
 /// Explorer öne geçtiğinde simgeleri yeniden isteme sıklığı (en fazla).
-const RESYNC_EVERY: Duration = Duration::from_secs(300);
+const RESYNC_EVERY: Duration = Duration::from_secs(30);
 /// Kendi yayınımızdan sonra gelen "TaskbarCreated" bizimki sayılır.
 const OWN_BROADCAST: Duration = Duration::from_secs(5);
 /// Explorer'a iletmede en fazla bekleme.
@@ -297,7 +297,7 @@ unsafe extern "system" fn default_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM
 }
 
 /// Explorer'ın asıl çubuğu (bizimki de aynı sınıfta).
-fn explorer_tray() -> Option<HWND> {
+pub(super) fn explorer_tray() -> Option<HWND> {
     let mut after = None;
     loop {
         let found = unsafe { FindWindowExW(None, after, w!("Shell_TrayWnd"), None) }.ok()?;
@@ -469,7 +469,12 @@ fn handle(message: u32, nid: &NotifyIconData) -> bool {
             NIM_ADD | NIM_MODIFY => {
                 let index = match (index, message) {
                     (Some(i), _) => i,
-                    (None, NIM_MODIFY) => return false,
+                    // Bilinmeyen simgeye NIM_MODIFY: simge Explorer'a biz öne geçmeden
+                    // eklenmişti (açılış / Explorer öne geçtiği an). Düşürmek yerine
+                    // eklenir; yeterli veri yoksa (simge ve ileti yok) Explorer'a kalır.
+                    (None, NIM_MODIFY) if nid.flags & (NIF_ICON | NIF_MESSAGE) == 0 => {
+                        return false;
+                    }
                     (None, _) => {
                         h.entries.push(Entry {
                             hwnd: nid.hwnd,
@@ -486,17 +491,27 @@ fn handle(message: u32, nid: &NotifyIconData) -> bool {
                     }
                 };
                 let e = &mut h.entries[index];
+                // GUID'li simge uygulama yeniden başlayınca yeni pencere / uID ile
+                // gelir: eski tutamaçta kalırsa kapanmış pencere diye silinirdi.
+                if nid.hwnd != 0 {
+                    e.hwnd = nid.hwnd;
+                    e.uid = nid.uid;
+                }
                 if nid.flags & NIF_MESSAGE != 0 {
                     e.callback = nid.callback;
                 }
                 if nid.flags & NIF_ICON != 0 {
-                    e.icon = (nid.hicon != 0)
+                    // Çevrilemeyen simge öncekini silmesin.
+                    let new = (nid.hicon != 0)
                         .then(|| {
                             crate::services::icons::hicon_data_url(HICON(
                                 wide_handle(nid.hicon) as *mut _
                             ))
                         })
                         .flatten();
+                    if new.is_some() || nid.hicon == 0 {
+                        e.icon = new;
+                    }
                 }
                 if nid.flags & NIF_TIP != 0 {
                     let end = nid
@@ -571,8 +586,9 @@ fn watch(tray: HWND) {
         let mut rect_changed = None;
         if h.ticks % 8 == 0 {
             let before = h.entries.len();
-            h.entries
-                .retain(|e| unsafe { IsWindow(Some(hwnd(wide_handle(e.hwnd)))) }.as_bool());
+            h.entries.retain(|e| {
+                e.hwnd == 0 || unsafe { IsWindow(Some(hwnd(wide_handle(e.hwnd)))) }.as_bool()
+            });
             h.dirty |= h.entries.len() != before;
             let r = placement::reserved_rect();
             if r.is_some() && r != h.rect {

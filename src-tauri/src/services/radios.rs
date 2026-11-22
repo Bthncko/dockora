@@ -178,13 +178,54 @@ fn read_state(radios: &[Radio]) -> RadiosState {
 /// IANA arayüz türü 6: Ethernet (ifType, RFC 1213).
 const IANA_ETHERNET: u32 = 6;
 
+/// İnternet profilinin bağdaştırıcısı gerçek, takılı kablolu bir Ethernet mi?
+/// WinRT yalnızca ifType'a bakar; Hyper-V/WSL vEthernet, TAP/VPN, VirtualBox gibi
+/// sanal bağdaştırıcılar da 6 döner. Bu yüzden `MIB_IF_ROW2` ile fiziksel arayüz,
+/// ortam bağlı ve çalışır durumda olması da aranır.
 fn is_ethernet(profile: &ConnectionProfile) -> bool {
-    !profile.IsWlanConnectionProfile().unwrap_or(false)
-        && !profile.IsWwanConnectionProfile().unwrap_or(false)
-        && profile
-            .NetworkAdapter()
-            .and_then(|a| a.IanaInterfaceType())
-            .is_ok_and(|t| t == IANA_ETHERNET)
+    if profile.IsWlanConnectionProfile().unwrap_or(false)
+        || profile.IsWwanConnectionProfile().unwrap_or(false)
+    {
+        return false;
+    }
+    let Ok(adapter) = profile.NetworkAdapter() else {
+        return false;
+    };
+    if adapter.IanaInterfaceType().ok() != Some(IANA_ETHERNET) {
+        return false;
+    }
+    adapter
+        .NetworkAdapterId()
+        .is_ok_and(|guid| is_physical_wired_up(&guid))
+}
+
+fn is_physical_wired_up(guid: &windows::core::GUID) -> bool {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        ConvertInterfaceGuidToLuid, GetIfEntry2, IF_TYPE_ETHERNET_CSMACD, MIB_IF_ROW2,
+    };
+    use windows::Win32::NetworkManagement::Ndis::{
+        IfOperStatusUp, MediaConnectStateConnected, NET_LUID_LH,
+    };
+    let mut luid = NET_LUID_LH::default();
+    if unsafe { ConvertInterfaceGuidToLuid(guid, &mut luid) }.is_err() {
+        return false;
+    }
+    let mut row = MIB_IF_ROW2 {
+        InterfaceLuid: luid,
+        ..Default::default()
+    };
+    if unsafe { GetIfEntry2(&mut row) }.is_err() {
+        return false;
+    }
+    // Bit alanı: bit 0 HardwareInterface, bit 1 FilterInterface.
+    let flags = row.InterfaceAndOperStatusFlags._bitfield;
+    let hardware = flags & 0x01 != 0;
+    let filter = flags & 0x02 != 0;
+    row.Type == IF_TYPE_ETHERNET_CSMACD
+        && hardware
+        && !filter
+        && row.OperStatus == IfOperStatusUp
+        && row.MediaConnectState == MediaConnectStateConnected
 }
 
 fn wifi_connection(profile: &ConnectionProfile) -> (Option<String>, Option<u8>) {

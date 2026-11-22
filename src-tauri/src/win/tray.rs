@@ -34,7 +34,8 @@ pub struct Anchor {
 }
 
 /// Taşma penceresini aç ve düğmenin üstüne taşı.
-pub fn open(app: &AppHandle, anchor: Anchor) -> AppResult<()> {
+/// Düğme yoksa (popup'taki "Windows tepsisi" bağlantısı) pencere dock'un sağ ucuna gelir.
+pub fn open(app: &AppHandle, anchor: Option<Anchor>) -> AppResult<()> {
     crate::services::launcher::open_tray()?;
     let start = Instant::now();
     while start.elapsed() < WAIT {
@@ -53,7 +54,7 @@ pub fn open(app: &AppHandle, anchor: Anchor) -> AppResult<()> {
 fn place(
     app: &AppHandle,
     overflow: windows::Win32::Foundation::HWND,
-    anchor: Anchor,
+    anchor: Option<Anchor>,
 ) -> AppResult<()> {
     let dock = app
         .get_webview_window("dock")
@@ -70,7 +71,10 @@ fn place(
     let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
     let gap = (GAP * scale).round() as i32;
     let margin = (MARGIN * scale).round() as i32;
-    let center = dock_rect.left + ((anchor.x + anchor.width / 2.0) * scale).round() as i32;
+    let center = match anchor {
+        Some(a) => dock_rect.left + ((a.x + a.width / 2.0) * scale).round() as i32,
+        None => dock_rect.right - margin - w / 2,
+    };
     let monitor = placement::monitor_rect_at(center, (bar.top + bar.bottom) / 2);
     let x = (center - w / 2).clamp(
         monitor.left + margin,
@@ -92,4 +96,82 @@ fn place(
         )?;
     }
     Ok(())
+}
+
+/// Windows 11 görev çubuğundaki "Gizli simgeleri göster" okunu UI Automation ile
+/// tetikler (çubuk gizli olsa da çalışır; tuş göndermez, Başlat'ı açmaz).
+/// `true`: ok bulundu ve tetiklendi.
+pub fn invoke_chevron() -> bool {
+    use windows::Win32::System::Com::{
+        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
+    };
+    use windows::Win32::UI::Accessibility::{
+        CUIAutomation, IUIAutomation, IUIAutomationInvokePattern, TreeScope_Descendants,
+        UIA_InvokePatternId,
+    };
+
+    let Some(taskbar) = super::tray_host::explorer_tray() else {
+        return false;
+    };
+    unsafe {
+        // Zaten başlatılmış olabilir (başka kipte): sorun değil.
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let Ok(auto) =
+            CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
+        else {
+            return false;
+        };
+        let Ok(root) = auto.ElementFromHandle(taskbar) else {
+            return false;
+        };
+        let Ok(all) = auto.CreateTrueCondition() else {
+            return false;
+        };
+        let Ok(found) = root.FindAll(TreeScope_Descendants, &all) else {
+            return false;
+        };
+        for i in 0..found.Length().unwrap_or(0) {
+            let Ok(el) = found.GetElement(i) else {
+                continue;
+            };
+            let id = el
+                .CurrentAutomationId()
+                .map(|b| b.to_string())
+                .unwrap_or_default();
+            let name = el.CurrentName().map(|b| b.to_string()).unwrap_or_default();
+            if !is_chevron(&id, &name) {
+                continue;
+            }
+            if let Ok(p) = el.GetCurrentPattern(UIA_InvokePatternId)
+                && let Ok(invoke) = windows::core::Interface::cast::<IUIAutomationInvokePattern>(&p)
+                && invoke.Invoke().is_ok()
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Win11: AutomationId "NotificationChevron"; ad yerelleşir ("Show hidden icons" /
+/// "Gizli simgeleri göster"), yedek olarak ona da bakılır.
+fn is_chevron(id: &str, name: &str) -> bool {
+    let id = id.to_lowercase();
+    let name = name.to_lowercase();
+    id.contains("notificationchevron")
+        || name.contains("hidden icons")
+        || name.contains("gizli simge")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_chevron;
+
+    #[test]
+    fn finds_chevron() {
+        assert!(is_chevron("NotificationChevron", ""));
+        assert!(is_chevron("", "Show Hidden Icons"));
+        assert!(is_chevron("", "Gizli simgeleri göster"));
+        assert!(!is_chevron("SystemTrayIcon", "Volume"));
+    }
 }

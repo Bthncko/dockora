@@ -37,6 +37,7 @@ windows-registry = "0.6"
 # Uygulama yalnızca Windows için. Tauri ile aynı sürüm (0.62) — HWND tipleri birebir uyuşsun.
 windows = { version = "0.62", features = [
   "Devices_Bluetooth",
+  "Devices_Bluetooth_GenericAttributeProfile",
   "Devices_Enumeration",
   "Devices_Radios",
   "Devices_WiFi",
@@ -54,6 +55,7 @@ windows = { version = "0.62", features = [
   "Web_Http",
   "Web_Http_Filters",
   "Web_Http_Headers",
+  "Win32_Devices_Bluetooth",
   "Win32_Devices_FunctionDiscovery",
   "Win32_Foundation",
   "Win32_Globalization",

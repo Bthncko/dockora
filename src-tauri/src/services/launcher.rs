@@ -159,6 +159,10 @@ pub fn system_shortcut(action: &str) -> AppResult<()> {
 /// (kapalıyken de "görünür"), bu yüzden ön plandaki pencereye bakılır.
 pub fn open_tray() -> AppResult<()> {
     const WAIT: Duration = Duration::from_millis(450);
+    // Önce UI Automation ile ok düğmesi (Win+B'ye bağlı değil, çubuk gizliyken de olur).
+    if crate::win::tray::invoke_chevron() {
+        return Ok(());
+    }
     send_chord(&[VK_LWIN, VK_B])?;
     let start = Instant::now();
     loop {

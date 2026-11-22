@@ -341,6 +341,9 @@ export type BtDevice = {
   name: string;
   connected: boolean;
   kind: "audio" | "input" | "phone" | "other";
+  id: string;
+  /** Yalnızca düşük enerjili (LE) aygıt. */
+  le: boolean;
 };
 /** `popup_ready` yanıtı: tıklanan widget'ın ortası, panelin sol kenarından (CSS px). */
 export type PopupPlaced = {
@@ -440,7 +443,8 @@ export const commands = {
   activateWindow: (hwnd: number) => invoke<void>("activate_window", { hwnd }),
   systemShortcut: (action: SystemButton) => invoke<void>("system_shortcut", { action }),
   /** Tepsi taşma penceresi, düğmenin üstünde (8.6). */
-  openTray: (anchor: { x: number; width: number }) => invoke<void>("open_tray", { anchor }),
+  openTray: (anchor?: { x: number; width: number }) =>
+    invoke<void>("open_tray", { anchor: anchor ?? null }),
 
   getMedia: () => invoke<MediaState>("get_media"),
   mediaToggle: () => invoke<void>("media_toggle"),
@@ -536,6 +540,9 @@ export const commands = {
     invoke<void>("wifi_connect", { ssid, password: password ?? null }),
   wifiDisconnect: () => invoke<void>("wifi_disconnect"),
   btDevices: () => invoke<BtDevice[]>("bt_devices"),
+  /** Hata "use_settings" ise bu aygıt programla ayrılamaz: Windows ayarlarını aç. */
+  btSetConnected: (id: string, le: boolean, connect: boolean) =>
+    invoke<void>("bt_set_connected", { id, le, connect }),
 };
 
 /** Komut hatalarını yutmadan konsola yazar; widget ayakta kalır. */

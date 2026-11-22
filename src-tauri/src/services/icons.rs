@@ -153,7 +153,7 @@ pub fn hicon_data_url(icon: HICON) -> Option<String> {
         GetIconInfo(icon, &mut info).ok()?;
         let result = (|| {
             if info.hbmColor.is_invalid() {
-                return None;
+                return monochrome_icon(info.hbmMask);
             }
             let (w, h, mut px) = bitmap_bgra(info.hbmColor)?;
             if px.as_chunks::<4>().0.iter().all(|p| p[3] == 0)
@@ -177,6 +177,28 @@ pub fn hicon_data_url(icon: HICON) -> Option<String> {
         let _ = DeleteObject(HGDIOBJ(info.hbmMask.0));
         result
     }
+}
+
+/// Renk bitmap'i olmayan (tek renkli) ikon: maske iki katı yüksekliktedir, üst
+/// yarı AND, alt yarı XOR. AND=0 → ikonun kendi pikseli (XOR siyah / beyaz),
+/// AND=1 → saydam (XOR=1 ters çevirme, saydam sayılır).
+unsafe fn monochrome_icon(mask: HBITMAP) -> Option<String> {
+    let (w, h2, px) = unsafe { bitmap_bgra(mask) }?;
+    let h = h2 / 2;
+    if h == 0 {
+        return None;
+    }
+    let row = w as usize * 4;
+    let mut out = Vec::with_capacity(row * h as usize);
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let and = px[y * row + x * 4] != 0;
+            let xor = px[(y + h as usize) * row + x * 4] != 0;
+            let c = if xor { 255 } else { 0 };
+            out.extend_from_slice(&[c, c, c, if and { 0 } else { 255 }]);
+        }
+    }
+    png_data_url(&image::RgbaImage::from_raw(w, h, out)?)
 }
 
 /// HBITMAP → üstten alta RGBA piksel dizisi.
