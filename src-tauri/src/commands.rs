@@ -7,7 +7,7 @@ use crate::config::{Config, ConfigStore};
 use crate::services::apps::{AppItem, AppsService};
 use crate::services::audio::{AudioCmd, AudioService, AudioState};
 use crate::services::backdrop::{Backdrop, BackdropService};
-use crate::services::media::{MediaCmd, MediaService, MediaState};
+use crate::services::media::{self, MediaCmd, MediaService, MediaState};
 use crate::services::power::{PowerService, PowerState};
 use crate::services::radios::{RadiosService, RadiosState, SetRadio};
 use crate::services::spotify::{
@@ -700,6 +700,7 @@ pub async fn set_energy_saver(power: State<'_, PowerService>, on: bool) -> CmdRe
 
 #[tauri::command]
 pub async fn set_brightness(percent: u8) -> CmdResult {
+    crate::services::flyouts::mark_own_brightness();
     blocking_str(move || battery_settings::set_brightness(percent)).await
 }
 
@@ -883,4 +884,52 @@ pub fn set_notification_sound(id: String) -> CmdResult {
 #[tauri::command]
 pub fn preview_notification_sound(id: String) {
     crate::services::notify_sound::preview(&id);
+}
+
+// --- ekran üstü kartlar (flyout) ---------------------------------------------
+
+/// Kart penceresi: sayfa içeriğinin boyu (CSS piksel). Konumlar ve gösterir; 0 → gizle.
+#[tauri::command]
+pub fn flyout_layout(app: AppHandle, width: f64, height: f64) -> CmdResult {
+    crate::win::flyout::layout(&app, width, height)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub fn flyout_hide(app: AppHandle) -> CmdResult {
+    crate::win::flyout::hide(&app)?;
+    Ok(())
+}
+
+/// İmleç kartın üstünde mi (otomatik gizleme sayfada).
+#[tauri::command]
+pub fn flyout_hold(hold: bool) {
+    crate::win::flyout::hold(hold);
+}
+
+/// Ses karıştırıcı: varsayılan çıkıştaki uygulama oturumları.
+#[tauri::command]
+pub async fn audio_sessions() -> CmdResult<Vec<crate::services::audio_sessions::AudioSession>> {
+    blocking_str(crate::services::audio_sessions::list).await
+}
+
+#[tauri::command]
+pub async fn set_session_volume(id: String, volume: u8) -> CmdResult {
+    blocking_str(move || crate::services::audio_sessions::set_volume(&id, volume)).await
+}
+
+#[tauri::command]
+pub async fn set_session_mute(id: String, muted: bool) -> CmdResult {
+    blocking_str(move || crate::services::audio_sessions::set_mute(&id, muted)).await
+}
+
+/// Geçerli medya oturumunun konumu / süresi (ms); oturum yoksa `null`.
+#[tauri::command]
+pub async fn media_timeline() -> CmdResult<Option<media::Timeline>> {
+    blocking_str(|| Ok(media::timeline())).await
+}
+
+#[tauri::command]
+pub async fn media_seek(position_ms: u64) -> CmdResult {
+    blocking_str(move || media::seek(position_ms)).await
 }

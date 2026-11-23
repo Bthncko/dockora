@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Dock ve popup pencerelerinin JS izinleri. Uygulamanın kendi komutları (invoke_handler) izin gerektirmez.",
-  "windows": ["dock", "popup", "preview", "settings", "notify"],
+  "windows": ["dock", "popup", "preview", "settings", "notify", "flyout"],
   "permissions": ["core:default"]
 }

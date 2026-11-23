@@ -6,6 +6,7 @@ import "@fontsource-variable/inter";
 import "./styles/tokens.css";
 import "./styles/global.css";
 import { DockWindow } from "./windows/DockWindow";
+import { FlyoutWindow } from "./windows/flyout/FlyoutWindow";
 import { NotifyWindow } from "./windows/notify/NotifyWindow";
 import { PopupWindow } from "./windows/PopupWindow";
 import { PreviewWindow } from "./windows/PreviewWindow";
@@ -22,6 +23,8 @@ function pickWindow() {
       return <PreviewWindow />;
     case "notify":
       return <NotifyWindow />;
+    case "flyout":
+      return <FlyoutWindow />;
     case "settings":
       return <SettingsWindow />;
     default:

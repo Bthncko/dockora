@@ -161,6 +161,14 @@ pub fn run() {
             commands::set_notification_sound,
             commands::preview_notification_sound,
             commands::get_brightness,
+            commands::flyout_layout,
+            commands::flyout_hide,
+            commands::flyout_hold,
+            commands::audio_sessions,
+            commands::set_session_volume,
+            commands::set_session_mute,
+            commands::media_timeline,
+            commands::media_seek,
             commands::notify_layout,
             commands::notify_test,
             commands::notify_activate,
@@ -215,6 +223,7 @@ pub fn run() {
             services::app_events::spawn(app.handle());
             services::media::spawn(app.handle());
             services::audio::spawn(app.handle());
+            services::flyouts::spawn(app.handle());
             services::battery_settings::init(config_dir.clone());
             services::power::spawn(app.handle());
             services::radios::spawn(app.handle());
@@ -241,6 +250,7 @@ pub fn run() {
             win::popup::init(app.handle())?;
             win::preview::init(app.handle())?;
             win::notify::init(app.handle())?;
+            win::flyout::init(app.handle())?;
             services::notifications::spawn(app.handle(), config_dir.clone(), own_notifications);
             win::window_fx::set_enabled(minimize_to_dock);
             win::window_fx::spawn(app.handle());

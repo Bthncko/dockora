@@ -21,6 +21,94 @@ export type NotifyAnchor =
 /** `x`/`y`: köşenin kenarlarından uzaklık (mantıksal piksel); ortada `x` yok sayılır. */
 export type NotifyPosition = { anchor: NotifyAnchor; x: number; y: number };
 
+export type FlyoutMonitor = "primary" | "cursor" | "focused";
+export type FlyoutEasing = "linear" | "sine" | "quad" | "cubic";
+export type FlyoutMediaBackground = "none" | "coverGlow" | "risingGlow" | "blur";
+export type FlyoutLockKey = "caps" | "num" | "scroll" | "insert";
+
+/** Ekran üstü kartlar (flyout). `placement`: alt kenarda `y` dock'un üstünden ölçülür. */
+export type FlyoutsConfig = {
+  enabled: boolean;
+  placement: NotifyPosition;
+  monitor: FlyoutMonitor;
+  hideInFullscreen: boolean;
+  /** Hız çarpanı; 0 = animasyonsuz. */
+  animationSpeed: number;
+  easing: FlyoutEasing;
+  albumAccent: boolean;
+  glass: boolean;
+  /** `apps`: oynatıcı kimlikleri (medya oturumunun `sourceApp`'i). */
+  appFilter: { mode: "off" | "allow" | "block"; apps: string[] };
+  media: {
+    enabled: boolean;
+    durationMs: number;
+    alwaysShow: boolean;
+    compact: boolean;
+    centerText: boolean;
+    showPlayer: boolean;
+    showRepeat: boolean;
+    showShuffle: boolean;
+    showSeekbar: boolean;
+    background: FlyoutMediaBackground;
+    /** Ses tuşları medya kartını açmasın. */
+    excludeVolumeKeys: boolean;
+    /** Bir oturum çalmaya başlayınca diğerlerini duraklat. */
+    pauseOthers: boolean;
+  };
+  nextUp: { enabled: boolean; durationMs: number };
+  lockKeys: {
+    enabled: boolean;
+    durationMs: number;
+    caps: boolean;
+    num: boolean;
+    scroll: boolean;
+    insert: boolean;
+    bold: boolean;
+    animated: boolean;
+  };
+  volume: {
+    enabled: boolean;
+    durationMs: number;
+    aboveMedia: boolean;
+    mixer: boolean;
+    highlightActive: boolean;
+  };
+  brightness: { enabled: boolean; durationMs: number };
+};
+
+/** Yalnızca "flyout" penceresine, `events.flyoutShow` ile. */
+export type FlyoutShow =
+  | { kind: "media"; trigger: "mediaKey" | "volumeKey" }
+  | {
+      kind: "nextUp";
+      title: string;
+      artist: string;
+      album?: string;
+      /** Kapak: MediaState.artwork ile aynı biçim (data URL). */
+      art?: string;
+      appId: string;
+    }
+  | { kind: "lockKey"; key: FlyoutLockKey; on: boolean }
+  | { kind: "volume"; level: number; muted: boolean; device: string }
+  | { kind: "brightness"; level: number };
+
+/** Ses karıştırıcısı satırı (varsayılan çıkış aygıtındaki bir uygulama oturumu). */
+export type AudioSession = {
+  id: string;
+  pid: number;
+  name: string;
+  /** data URL */
+  icon: string | null;
+  /** 0–100 */
+  volume: number;
+  muted: boolean;
+  /** Şu an ses çıkarıyor. */
+  active: boolean;
+};
+
+/** Medya oturumunun zaman çizelgesi (ms); oturum yoksa null. */
+export type MediaTimeline = { positionMs: number; durationMs: number; playing: boolean } | null;
+
 /** "smart": yalnızca bir pencere dock'un alanına girince gizlenir. */
 export type AutoHide = "never" | "always" | "smart";
 
@@ -36,6 +124,8 @@ export type Config = {
   ownNotifications: boolean;
   /** Bildirim kartlarının yeri; alt kenarda uzaklık dock'un üstünden ölçülür. */
   notifyPosition: NotifyPosition;
+  /** Ekran üstü kartlar: medya, sıradaki şarkı, kilit tuşları, ses, parlaklık. */
+  flyouts: FlyoutsConfig;
   /** Arayüz dili: "auto" Windows'un diline uyar. */
   language: "auto" | "tr" | "en";
   /** Otomatik gizlenme (8.10). */
@@ -264,6 +354,8 @@ export const events = {
   notifyGone: "notify://gone",
   /** Bildirim kartlarının buzlu camı (NotifyBackdrop), kart olayından hemen önce. */
   notifyBackdrop: "notify://backdrop",
+  /** Yalnızca "flyout" penceresine: gösterilecek kart (FlyoutShow). */
+  flyoutShow: "flyout:show",
   /** Kendi tepsimizdeki simgeler (TrayState). */
   tray: "tray://changed",
   /** Yalnızca önizleme penceresine: hangi uygulamanın pencereleri (PreviewOpen). */
@@ -528,6 +620,20 @@ export const commands = {
   aiUsageRefresh: () => invoke<void>("ai_usage_refresh"),
   getBrightness: () => invoke<number | null>("get_brightness"),
   notifyLayout: (width: number, height: number) => invoke<void>("notify_layout", { width, height }),
+  /** Flyout penceresi: içerik boyutu (CSS px, tam pencere); konumlar ve gösterir. 0 → gizle. */
+  flyoutLayout: (width: number, height: number) =>
+    invoke<void>("flyout_layout", { width, height }),
+  flyoutHide: () => invoke<void>("flyout_hide"),
+  /** İmleç kartın üzerinde: Rust tarafına bilgi (otomatik gizleme sayfada). */
+  flyoutHold: (hold: boolean) => invoke<void>("flyout_hold", { hold }),
+  /** Varsayılan çıkış aygıtındaki uygulama oturumları (ses karıştırıcı). */
+  audioSessions: () => invoke<AudioSession[]>("audio_sessions"),
+  setSessionVolume: (id: string, volume: number) =>
+    invoke<void>("set_session_volume", { id, volume }),
+  setSessionMute: (id: string, muted: boolean) => invoke<void>("set_session_mute", { id, muted }),
+  /** Geçerli medya oturumunun konumu / süresi. */
+  mediaTimeline: () => invoke<MediaTimeline>("media_timeline"),
+  mediaSeek: (positionMs: number) => invoke<void>("media_seek", { positionMs }),
   notifyActivate: (id: number) => invoke<void>("notify_activate", { id }),
   /** Ayarlar → "Dene": örnek kart; `silent` ise ses çalmaz. */
   notifyTest: (silent = false) => invoke<void>("notify_test", { silent }),

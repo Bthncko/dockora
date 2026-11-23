@@ -86,10 +86,33 @@ const percentOf = (v: number, of: number) => `${(v / of) * 100}%`;
  * kenar ortasına oturur ve gerçek ekranda örnek kart orada görünür. Uzaklıklar
  * kaydırıcılarla piksel piksel ayarlanır.
  */
-export function NotifyPlacement({ config }: { config: Config }) {
-  const pos = config.notifyPosition;
+export function NotifyPlacement({
+  config,
+  value,
+  onChange,
+  disabled: disabledProp,
+  title,
+  card = { w: CARD_W, h: CARD_H },
+  onTest,
+  hint,
+  cardLabel,
+}: {
+  config: Config;
+  /** Verilmezse bildirim konumu (varsayılan davranış). */
+  value?: NotifyPosition;
+  onChange?: (next: NotifyPosition, delay?: number) => void;
+  disabled?: boolean;
+  title?: string;
+  card?: { w: number; h: number };
+  /** Verilmezse "Göster" düğmesi ve örnek kart yok. */
+  onTest?: (() => void) | null;
+  hint?: string;
+  cardLabel?: string;
+}) {
+  const custom = value !== undefined;
+  const pos = value ?? config.notifyPosition;
   const zoom = uiScale(config.theme);
-  const disabled = !config.ownNotifications;
+  const disabled = disabledProp ?? !config.ownNotifications;
   const center = pos.anchor.endsWith("Center");
   const bottom = pos.anchor.startsWith("bottom");
 
@@ -99,7 +122,7 @@ export function NotifyPlacement({ config }: { config: Config }) {
   const s: Screen = {
     w: sw,
     h: sh - BAR_H * zoom,
-    card: { w: CARD_W * zoom, h: CARD_H * zoom },
+    card: { w: card.w * zoom, h: card.h * zoom },
   };
 
   const screenRef = useRef<HTMLDivElement>(null);
@@ -107,13 +130,19 @@ export function NotifyPlacement({ config }: { config: Config }) {
   const [drag, setDrag] = useState<Point | null>(null);
 
   const set = (next: NotifyPosition, delay = 0) =>
-    updateConfig((c) => ({ ...c, notifyPosition: next }), delay);
+    onChange
+      ? onChange(next, delay)
+      : updateConfig((c) => ({ ...c, notifyPosition: next }), delay);
 
-  const show = () => commands.notifyTest(true).catch(report("notify_test"));
+  const show = () => {
+    if (custom) onTest?.();
+    else commands.notifyTest(true).catch(report("notify_test"));
+  };
+  const canTest = !custom || !!onTest;
 
   const place = (next: NotifyPosition) => {
     set(next);
-    window.setTimeout(show, TEST_DELAY_MS);
+    if (canTest) window.setTimeout(show, TEST_DELAY_MS);
   };
 
   /** İmleç → ekran (mantıksal piksel). */
@@ -173,23 +202,26 @@ export function NotifyPlacement({ config }: { config: Config }) {
 
   return (
     <>
-      <h3 className={settings.subTitle}>{t("Bildirim konumu")}</h3>
+      <h3 className={settings.subTitle}>{title ?? t("Bildirim konumu")}</h3>
       <Card>
         <Row
           label={NAMES[target]}
           hint={
-            disabled
+            hint ??
+            (disabled
               ? t(
                   "Yalnızca dock tarzı bildirimlerde; yukarıdan açınca buradan yerini seçebilirsin.",
                 )
               : t(
                   "Kartı sürükle ya da ekranda bir yere tıkla: en yakın köşeye ya da kenarın ortasına oturur, örnek kart gerçek yerinde görünür.",
-                )
+                ))
           }
         >
-          <button type="button" className={settings.button} disabled={disabled} onClick={show}>
-            {t("Göster")}
-          </button>
+          {canTest && (
+            <button type="button" className={settings.button} disabled={disabled} onClick={show}>
+              {t("Göster")}
+            </button>
+          )}
         </Row>
         <div className={styles.stage} data-disabled={disabled || undefined}>
           <div
@@ -214,7 +246,11 @@ export function NotifyPlacement({ config }: { config: Config }) {
               onPointerUp={onCardUp}
               onPointerCancel={onCardUp}
               role="img"
-              aria-label={t("Bildirim kartı: {name}", { name: NAMES[pos.anchor] })}
+              aria-label={
+                cardLabel
+                  ? `${cardLabel}: ${NAMES[pos.anchor]}`
+                  : t("Bildirim kartı: {name}", { name: NAMES[pos.anchor] })
+              }
             >
               <span className={styles.cardIcon} />
               <span className={styles.cardLines}>

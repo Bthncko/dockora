@@ -7,11 +7,12 @@
 //! servisi uyandırır; oturum değişince oturum olayları yenisine taşınır.
 //! Seyrek yoklama yedektir (bazı oynatıcılar olay göndermeyebilir).
 
+use std::cell::RefCell;
 use std::time::Duration;
 
 use base64::Engine;
 use serde::Serialize;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager as _};
 use windows::Foundation::TypedEventHandler;
 use windows::Media::Control::{
     CurrentSessionChangedEventArgs, GlobalSystemMediaTransportControlsSession as Session,
@@ -25,6 +26,7 @@ use windows::core::Interface;
 use windows_future::IAsyncOperation;
 
 use super::runner::{self, Waker};
+use crate::config::ConfigStore;
 
 pub const MEDIA_CHANGED: &str = "media://changed";
 /// Yedek yoklama: olay göndermeyen oynatıcılar için.
@@ -161,6 +163,9 @@ pub fn spawn(app: &AppHandle) {
             // Kapak resmini parça değişmedikçe yeniden okuma.
             let mut artwork_key = String::new();
             let mut artwork: Option<String> = None;
+            // Şarkı kendiliğinden mi değişti (aynı uygulama), kim çalıyor (diğerlerini duraklatma).
+            let mut last_app = String::new();
+            let mut playing_app: Option<String> = None;
             move |cmd: Option<MediaCmd>| {
                 if manager.is_none() {
                     manager = open_manager(&waker);
@@ -189,7 +194,10 @@ pub fn spawn(app: &AppHandle) {
                     .unwrap_or_default();
 
                 let key = format!("{source_app}\u{1}{title}\u{1}{artist}");
+                let mut track_changed = false;
                 if key != artwork_key {
+                    track_changed = !artwork_key.is_empty() && last_app == source_app;
+                    last_app = source_app.clone();
                     artwork = props.Thumbnail().ok().and_then(|t| read_artwork(&t));
                     artwork_key = key;
                     // Panelden sıradan kaldırılan şarkı başladıysa geç.
@@ -203,6 +211,32 @@ pub fn spawn(app: &AppHandle) {
                     .as_ref()
                     .and_then(|p| p.PlaybackStatus().ok())
                     .is_some_and(|s| s == PlaybackStatus::Playing);
+                if track_changed && playing {
+                    let album = props.AlbumTitle().ok().map(|s| s.to_string());
+                    super::flyouts::track_changed(
+                        &app,
+                        &title,
+                        &artist,
+                        album,
+                        artwork.clone(),
+                        &source_app,
+                    );
+                }
+                // Bir oturum çalmaya başladı: ayara göre diğerlerini duraklat.
+                if playing {
+                    if playing_app.as_deref() != Some(source_app.as_str()) {
+                        playing_app = Some(source_app.clone());
+                        let pause = app.try_state::<ConfigStore>().is_some_and(|c| {
+                            let f = c.get().flyouts;
+                            f.enabled && f.media.pause_others
+                        });
+                        if pause && let Some(m) = manager.as_ref() {
+                            pause_others(&m.manager, &source_app);
+                        }
+                    }
+                } else {
+                    playing_app = None;
+                }
                 let controls = playback.as_ref().and_then(|p| p.Controls().ok());
                 let can = |f: fn(&_) -> windows::core::Result<bool>| {
                     controls.as_ref().and_then(|c| f(c).ok()).unwrap_or(false)
@@ -240,6 +274,9 @@ pub fn spawn(app: &AppHandle) {
 }
 
 fn run_command(session: &Session, cmd: MediaCmd) {
+    if matches!(cmd, MediaCmd::Next | MediaCmd::Prev) {
+        super::flyouts::mark_user_skip();
+    }
     let op = match cmd {
         MediaCmd::Toggle => session.TryTogglePlayPauseAsync(),
         MediaCmd::Next => session.TrySkipNextAsync(),
@@ -272,4 +309,116 @@ fn read_artwork(reference: &IRandomAccessStreamReference) -> Option<String> {
         .unwrap_or_else(|| "image/png".into());
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     Some(format!("data:{content_type};base64,{b64}"))
+}
+
+/// Çalan diğer oturumları duraklatır (beklemeden).
+fn pause_others(manager: &Manager, current_app: &str) {
+    let Ok(sessions) = manager.GetSessions() else {
+        return;
+    };
+    for other in sessions {
+        let id = other
+            .SourceAppUserModelId()
+            .map(|s| s.to_string())
+            .unwrap_or_default();
+        if id == current_app {
+            continue;
+        }
+        if is_playing(&other) {
+            let _ = other.TryPauseAsync();
+        }
+    }
+}
+
+pub fn is_playing(session: &Session) -> bool {
+    session
+        .GetPlaybackInfo()
+        .and_then(|p| p.PlaybackStatus())
+        .is_ok_and(|s| s == PlaybackStatus::Playing)
+}
+
+thread_local! {
+    static MANAGER: RefCell<Option<Manager>> = const { RefCell::new(None) };
+}
+
+/// Çağıran iş parçacığında COM (MTA) başlatılmış olmalı; yönetici iş parçacığı
+/// başına bir kez alınır. Geçerli oturum ve uygulama kimliği.
+pub fn current_session() -> Option<(Session, String)> {
+    let manager = MANAGER.with(|m| {
+        let mut m = m.borrow_mut();
+        if m.is_none() {
+            *m = Manager::RequestAsync().and_then(|op| op.join()).ok();
+        }
+        m.clone()
+    })?;
+    let session = manager.GetCurrentSession().ok()?;
+    let id = session
+        .SourceAppUserModelId()
+        .map(|s| s.to_string())
+        .unwrap_or_default();
+    Some((session, id))
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Timeline {
+    pub position_ms: u64,
+    pub duration_ms: u64,
+    pub playing: bool,
+}
+
+/// 100 ns birimleri.
+const TICKS_PER_MS: i64 = 10_000;
+/// 1601-01-01 → 1970-01-01 (100 ns).
+const UNIX_EPOCH_TICKS: i64 = 116_444_736_000_000_000;
+
+/// Geçerli oturumun konumu / süresi; oynatıcı son güncellemeden bu yana geçen
+/// süreyi ekler (çoğu oynatıcı konumu yalnızca değişimde bildirir).
+pub fn timeline() -> Option<Timeline> {
+    super::audio_sessions::ensure_com();
+    let (session, _) = current_session()?;
+    let t = session.GetTimelineProperties().ok()?;
+    let start = t.StartTime().ok()?.Duration;
+    let end = t.EndTime().ok()?.Duration;
+    let duration = (end - start).max(0);
+    let mut position = t.Position().ok()?.Duration - start;
+    let playing = is_playing(&session);
+    if playing && let Ok(updated) = t.LastUpdatedTime() {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| (d.as_nanos() / 100) as i64)
+            .unwrap_or(0)
+            + UNIX_EPOCH_TICKS;
+        let rate = session
+            .GetPlaybackInfo()
+            .ok()
+            .and_then(|p| p.PlaybackRate().ok()?.Value().ok())
+            .unwrap_or(1.0);
+        let elapsed = (now - updated.UniversalTime).max(0);
+        position += (elapsed as f64 * rate) as i64;
+    }
+    let position = position.clamp(0, duration);
+    Some(Timeline {
+        position_ms: (position / TICKS_PER_MS) as u64,
+        duration_ms: (duration / TICKS_PER_MS) as u64,
+        playing,
+    })
+}
+
+/// Geçerli oturumda konuma atla (ms).
+pub fn seek(position_ms: u64) -> Result<(), String> {
+    super::audio_sessions::ensure_com();
+    let (session, _) = current_session().ok_or("medya oturumu yok")?;
+    let start = session
+        .GetTimelineProperties()
+        .ok()
+        .and_then(|t| t.StartTime().ok())
+        .map(|d| d.Duration)
+        .unwrap_or(0);
+    let ticks = start + (position_ms as i64).saturating_mul(TICKS_PER_MS);
+    session
+        .TryChangePlaybackPositionAsync(ticks)
+        .and_then(|op| op.join())
+        .map_err(|e| e.to_string())?;
+    Ok(())
 }

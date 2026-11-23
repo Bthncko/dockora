@@ -209,18 +209,23 @@
   color: var(--text-2);
 }
 
-/* Anahtar */
+/* Anahtar: kapalı = koyu iz + çerçeve + gri düğme (solda); açık = vurgu dolgulu,
+   düğme vurguyla zıt (--on-accent-knob, theme.ts), sağda. */
 .toggle {
   position: relative;
   width: 40px;
   height: 22px;
   border-radius: 11px;
-  background: var(--tile-press);
-  transition: background-color 150ms ease;
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 0 0 1.5px var(--text-2);
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
 }
 
 .toggle[aria-checked="true"] {
   background: var(--accent);
+  box-shadow: inset 0 0 0 1.5px var(--accent);
 }
 
 .toggle:disabled {
@@ -229,17 +234,20 @@
 
 .toggleKnob {
   position: absolute;
-  top: 3px;
-  left: 3px;
-  width: 16px;
-  height: 16px;
+  top: 4px;
+  left: 4px;
+  width: 14px;
+  height: 14px;
   border-radius: 50%;
-  background: #fff;
-  transition: transform 150ms ease;
+  background: var(--text-2);
+  transition:
+    transform 150ms ease,
+    background-color 150ms ease;
 }
 
 .toggle[aria-checked="true"] .toggleKnob {
   transform: translateX(18px);
+  background: var(--on-accent-knob, #14181f);
 }
 
 /* Kaydırıcı */
@@ -263,6 +271,7 @@
   height: 16px;
   border-radius: 50%;
   background: #fff;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
 }
 
 .slider[data-disabled] {
@@ -297,6 +306,7 @@
 .segment[aria-checked="true"] {
   background: var(--tile-hover);
   color: var(--text);
+  box-shadow: inset 0 0 0 1px var(--text-2);
 }
 
 /* Renkler */

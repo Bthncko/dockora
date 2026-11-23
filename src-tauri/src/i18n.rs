@@ -72,6 +72,7 @@ fn en(tr: &'static str) -> &'static str {
         // Diğer
         "Ayarlar" => "Settings",
         "Ses aygıtı" => "Audio device",
+        "Sistem sesleri" => "System sounds",
         _ => tr,
     }
 }

@@ -32,6 +32,9 @@ pub struct Config {
     pub own_notifications: bool,
     /// Bildirim kartlarının ekrandaki yeri (win/notify.rs).
     pub notify_position: NotifyPosition,
+    /// Ekran üstü kartlar: medya, sıradaki şarkı, kilit tuşları, ses, parlaklık
+    /// (win/flyout.rs, services/flyouts.rs).
+    pub flyouts: FlyoutsConfig,
     /// Arayüz dili: "auto" (Windows'un dili) | "tr" | "en" (i18n.rs).
     pub language: String,
     /// Otomatik gizlenme (8.10): "never" | "always" | "smart" (win/autohide.rs).
@@ -51,6 +54,7 @@ impl Default for Config {
             auto_update: true,
             own_notifications: true,
             notify_position: NotifyPosition::default(),
+            flyouts: FlyoutsConfig::default(),
             language: "auto".into(),
             auto_hide: "never".into(),
             theme: Theme::default(),
@@ -77,6 +81,209 @@ impl Default for NotifyPosition {
             anchor: "topRight".into(),
             x: 12.0,
             y: 12.0,
+        }
+    }
+}
+
+/// Ekran üstü kartlar (flyout). Yer: `NotifyPosition` ile aynı biçim; alt kenarda
+/// `y` dock'un üstünden ölçülür.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutsConfig {
+    pub enabled: bool,
+    pub placement: NotifyPosition,
+    /// "primary" | "cursor" | "focused": kartın çıkacağı ekran.
+    pub monitor: String,
+    /// Tam ekran oyun / sunum / meşgul modunda gösterme.
+    pub hide_in_fullscreen: bool,
+    /// Animasyon hızı çarpanı; 0 = animasyonsuz.
+    pub animation_speed: f64,
+    /// "linear" | "sine" | "quad" | "cubic".
+    pub easing: String,
+    pub album_accent: bool,
+    pub glass: bool,
+    pub app_filter: FlyoutAppFilter,
+    pub media: FlyoutMedia,
+    pub next_up: FlyoutNextUp,
+    pub lock_keys: FlyoutLockKeys,
+    pub volume: FlyoutVolume,
+    pub brightness: FlyoutBrightness,
+}
+
+impl Default for FlyoutsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            placement: NotifyPosition {
+                anchor: "bottomCenter".into(),
+                x: 0.0,
+                y: 12.0,
+            },
+            monitor: "primary".into(),
+            hide_in_fullscreen: true,
+            animation_speed: 1.0,
+            easing: "quad".into(),
+            album_accent: false,
+            glass: true,
+            app_filter: FlyoutAppFilter::default(),
+            media: FlyoutMedia::default(),
+            next_up: FlyoutNextUp::default(),
+            lock_keys: FlyoutLockKeys::default(),
+            volume: FlyoutVolume::default(),
+            brightness: FlyoutBrightness::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutAppFilter {
+    /// "off" | "allow" (yalnızca listedekiler) | "block" (listedekiler hariç).
+    pub mode: String,
+    /// Oynatıcı kimlikleri (medya oturumunun `SourceAppUserModelId`'si).
+    pub apps: Vec<String>,
+}
+
+impl Default for FlyoutAppFilter {
+    fn default() -> Self {
+        Self {
+            mode: "off".into(),
+            apps: Vec::new(),
+        }
+    }
+}
+
+impl FlyoutAppFilter {
+    /// Bu oynatıcı için kart gösterilebilir mi (büyük/küçük harf duyarsız).
+    pub fn allows(&self, app_id: &str) -> bool {
+        let listed = self.apps.iter().any(|a| a.eq_ignore_ascii_case(app_id));
+        match self.mode.as_str() {
+            "allow" => listed,
+            "block" => !listed,
+            _ => true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutMedia {
+    pub enabled: bool,
+    pub duration_ms: u32,
+    pub always_show: bool,
+    pub compact: bool,
+    pub center_text: bool,
+    pub show_player: bool,
+    pub show_repeat: bool,
+    pub show_shuffle: bool,
+    pub show_seekbar: bool,
+    /// "none" | "coverGlow" | "risingGlow" | "blur".
+    pub background: String,
+    /// Ses tuşları medya kartını açmasın (ses kartı çıkar).
+    pub exclude_volume_keys: bool,
+    /// Bir oturum çalmaya başlayınca diğerlerini duraklat.
+    pub pause_others: bool,
+}
+
+impl Default for FlyoutMedia {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 3000,
+            always_show: false,
+            compact: false,
+            center_text: false,
+            show_player: true,
+            show_repeat: true,
+            show_shuffle: true,
+            show_seekbar: true,
+            background: "coverGlow".into(),
+            exclude_volume_keys: false,
+            pause_others: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutNextUp {
+    pub enabled: bool,
+    pub duration_ms: u32,
+}
+
+impl Default for FlyoutNextUp {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 2000,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutLockKeys {
+    pub enabled: bool,
+    pub duration_ms: u32,
+    pub caps: bool,
+    pub num: bool,
+    pub scroll: bool,
+    pub insert: bool,
+    pub bold: bool,
+    pub animated: bool,
+}
+
+impl Default for FlyoutLockKeys {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 2000,
+            caps: true,
+            num: true,
+            scroll: true,
+            insert: false,
+            bold: true,
+            animated: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutVolume {
+    pub enabled: bool,
+    pub duration_ms: u32,
+    pub above_media: bool,
+    pub mixer: bool,
+    pub highlight_active: bool,
+}
+
+impl Default for FlyoutVolume {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 3000,
+            above_media: false,
+            mixer: true,
+            highlight_active: true,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase", default)]
+pub struct FlyoutBrightness {
+    pub enabled: bool,
+    pub duration_ms: u32,
+}
+
+impl Default for FlyoutBrightness {
+    fn default() -> Self {
+        Self {
+            // Windows'un kendi parlaklık göstergesi gizlenemiyor; ikisi birden
+            // çıkmasın diye varsayılan kapalı.
+            enabled: false,
+            duration_ms: 2000,
         }
     }
 }
@@ -378,5 +585,34 @@ impl ConfigStore {
             crate::services::sync_active(app, &next);
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flyouts_defaults_and_camel_case() {
+        let c: Config = serde_json::from_str("{}").unwrap();
+        assert!(c.flyouts.enabled);
+        assert_eq!(c.flyouts.placement.anchor, "bottomCenter");
+        let v = serde_json::to_value(&c).unwrap();
+        assert_eq!(v["flyouts"]["lockKeys"]["durationMs"], 2000);
+        assert_eq!(v["flyouts"]["media"]["excludeVolumeKeys"], false);
+        // Eksik alanlı eski dosya okunur.
+        let c: Config = serde_json::from_str(r#"{"flyouts":{"volume":{"mixer":false}}}"#).unwrap();
+        assert!(!c.flyouts.volume.mixer && c.flyouts.volume.enabled);
+    }
+
+    #[test]
+    fn app_filter() {
+        let mut f = FlyoutAppFilter::default();
+        assert!(f.allows("Spotify.exe"));
+        f.apps = vec!["spotify.exe".into()];
+        f.mode = "allow".into();
+        assert!(f.allows("Spotify.exe") && !f.allows("chrome.exe"));
+        f.mode = "block".into();
+        assert!(!f.allows("Spotify.exe") && f.allows("chrome.exe"));
     }
 }

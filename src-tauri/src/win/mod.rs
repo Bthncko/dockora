@@ -1,9 +1,11 @@
 pub mod appbar;
 pub mod autohide;
 pub mod broadcast;
+pub mod flyout;
 pub mod focus;
 pub mod glass;
 pub mod notify;
+pub mod osd_guard;
 pub mod placement;
 pub mod popup;
 pub mod preview;

@@ -60,6 +60,22 @@
         "noRedirectionBitmap": true
       },
       {
+        "label": "flyout",
+        "title": "Dockora Kartlar",
+        "width": 420,
+        "height": 160,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "visible": false,
+        "focus": false,
+        "focusable": false,
+        "noRedirectionBitmap": true
+      },
+      {
         "label": "popup",
         "title": "Dockora Panel",
         "width": 340,

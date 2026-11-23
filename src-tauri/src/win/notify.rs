@@ -27,7 +27,7 @@ pub const LABEL: &str = "notify";
 pub const NOTIFY_BACKDROP: &str = "notify://backdrop";
 const SHADOW_PAD: f64 = 16.0;
 /// Kenar uzaklığının üst sınırı (mantıksal piksel); ekrandan taşma ayrıca kırpılır.
-const OFFSET_MAX: f64 = 4000.0;
+pub(super) const OFFSET_MAX: f64 = 4000.0;
 /// Okunan alan (mantıksal piksel, sayfa zoom'u öncesi): kart (360) + pay;
 /// üç kartlık yığından uzun.
 const GLASS_W: f64 = 400.0;
@@ -46,7 +46,7 @@ pub struct Backdrop {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Horizontal {
+pub(super) enum Horizontal {
     Left,
     Center,
     Right,
@@ -54,7 +54,7 @@ enum Horizontal {
 
 /// Kartların yeri (fiziksel piksel).
 #[derive(Clone, Copy, Debug)]
-struct Spot {
+pub(super) struct Spot {
     h: Horizontal,
     bottom: bool,
     x: i32,
@@ -62,7 +62,7 @@ struct Spot {
 }
 
 impl Spot {
-    fn parse(anchor: &str, x: i32, y: i32) -> Self {
+    pub(super) fn parse(anchor: &str, x: i32, y: i32) -> Self {
         let bottom = anchor.starts_with("bottom");
         let h = if anchor.ends_with("Left") {
             Horizontal::Left
@@ -75,7 +75,7 @@ impl Spot {
     }
 
     /// `w`×`h` boyutlu yığının `area` içindeki sol üst köşesi (alanın içinde kalır).
-    fn origin(&self, area: RECT, w: i32, h: i32) -> (i32, i32) {
+    pub(super) fn origin(&self, area: RECT, w: i32, h: i32) -> (i32, i32) {
         let left = match self.h {
             Horizontal::Left => area.left + self.x,
             Horizontal::Center => area.left + (area.right - area.left - w) / 2,
@@ -104,7 +104,15 @@ fn spot(app: &AppHandle, dpi: f64) -> Spot {
 
 /// Kartların durabileceği alan: ana ekran, alt kenarda dock'un üstüne kadar.
 fn area() -> RECT {
-    let monitor = placement::primary_monitor_rect();
+    area_in(placement::primary_monitor_rect())
+}
+
+/// `monitor` ekranında kartların durabileceği alan; dock yalnızca ana ekranda
+/// olduğundan şerit orada düşülür (ekran kartları `flyout.rs` da kullanır).
+pub(super) fn area_in(monitor: RECT) -> RECT {
+    if monitor != placement::primary_monitor_rect() {
+        return monitor;
+    }
     match (EDGE, placement::reserved_rect()) {
         (Edge::Bottom, Some(bar)) => RECT {
             bottom: bar.top.min(monitor.bottom),

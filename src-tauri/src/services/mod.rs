@@ -3,9 +3,11 @@ pub mod app_events;
 pub mod apps;
 pub mod audio;
 pub mod audio_devices;
+pub mod audio_sessions;
 pub mod backdrop;
 pub mod battery_settings;
 pub mod file_drop;
+pub mod flyouts;
 pub mod http;
 pub mod icons;
 pub mod ics;
@@ -37,12 +39,18 @@ use crate::config::Config;
 /// Açılışta ve config her değiştiğinde (`ConfigStore::update`) çağrılır.
 pub fn sync_active(app: &AppHandle, config: &Config) {
     let on = |id: &str| config.layout.contains(id);
+    // Ekran üstü kartlar da bu servislerin durumunu okur (medya, ses kartı).
+    let fly = &config.flyouts;
+    let fly_media =
+        fly.enabled && (fly.media.enabled || fly.next_up.enabled || fly.media.pause_others);
+    let fly_audio = fly.enabled && fly.volume.enabled;
     if let Some(s) = app.try_state::<media::MediaService>() {
-        s.set_active(on("media"));
+        s.set_active(on("media") || fly_media);
     }
     if let Some(s) = app.try_state::<audio::AudioService>() {
-        s.set_active(on("volume") || on("mic"));
+        s.set_active(on("volume") || on("mic") || fly_audio);
     }
+    flyouts::sync(config);
     if let Some(s) = app.try_state::<power::PowerService>() {
         s.set_active(on("battery"));
     }

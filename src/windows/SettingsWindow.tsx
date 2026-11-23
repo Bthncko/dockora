@@ -7,6 +7,7 @@ import { applyTheme } from "../lib/theme";
 import { Appearance } from "./settings/Appearance";
 import { Apps } from "./settings/Apps";
 import { Calendar } from "./settings/Calendar";
+import { Flyouts } from "./settings/Flyouts";
 import { General } from "./settings/General";
 import { Music } from "./settings/Music";
 import { Weather } from "./settings/Weather";
@@ -58,6 +59,13 @@ const PAGES: { id: string; label: string; Page: FC<{ config: Config }> }[] = [
       return t("Müzik");
     },
     Page: Music,
+  },
+  {
+    id: "flyouts",
+    get label() {
+      return t("Göstergeler");
+    },
+    Page: Flyouts,
   },
   {
     id: "general",
