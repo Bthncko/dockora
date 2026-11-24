@@ -177,10 +177,12 @@ fn wide_handle(v: u32) -> isize {
 
 pub fn init(app: &AppHandle) {
     let _ = APP.set(app.clone());
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("tray-host".into())
         .spawn(run)
-        .expect("tray-host başlatılamadı");
+    {
+        eprintln!("[tray] iş parçacığı başlatılamadı: {e}");
+    }
 }
 
 /// Çıkışta: pencere kapanır, uygulamalar yine Explorer'ı bulur (simgeler
@@ -280,7 +282,6 @@ fn run() {
         broadcast();
         // Açılışta Windows çubuğu gizlenirken sıra karışabilir: bir kez daha iste.
         SetTimer(Some(tray), TIMER_REBROADCAST, STARTUP_RESYNC_MS, None);
-        eprintln!("[tray] simgeler alınıyor");
 
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {

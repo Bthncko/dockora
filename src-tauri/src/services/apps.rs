@@ -14,7 +14,6 @@ use std::time::Duration;
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
-use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
 
 use super::icons::shell_info;
 use super::jumplist;
@@ -410,13 +409,11 @@ struct PollerCache {
 }
 
 pub fn spawn_poller(app: AppHandle, wake: Receiver<()>) {
-    std::thread::Builder::new()
+    let spawned = std::thread::Builder::new()
         .name("apps-poller".into())
         .spawn(move || {
             // Kabuk ve özellik deposu API'leri COM ister.
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-            }
+            crate::win::com_sta();
             let mut cache = PollerCache::default();
             loop {
                 let (items, meta) = build(&app, &mut cache);
@@ -444,8 +441,10 @@ pub fn spawn_poller(app: AppHandle, wake: Receiver<()>) {
                     Err(RecvTimeoutError::Disconnected) => break,
                 }
             }
-        })
-        .expect("apps-poller başlatılamadı");
+        });
+    if let Err(e) = spawned {
+        eprintln!("[apps] yoklayıcı başlatılamadı: {e}");
+    }
 }
 
 fn build(app: &AppHandle, cache: &mut PollerCache) -> (Vec<AppItem>, HashMap<String, AppMeta>) {

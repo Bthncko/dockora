@@ -37,6 +37,49 @@ pub unsafe fn take_pwstr(p: PWSTR) -> String {
     s
 }
 
+thread_local! {
+    /// Bu iş parçacığında COM zaten başlatıldı (havuz iş parçacıklarında her
+    /// komutta yeniden başlatıp sayacı şişirmemek için).
+    static COM_READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Çağıran iş parçacığında COM'u çok iş parçacıklı daireyle (MTA) başlatır.
+/// Zaten başlatılmışsa (ya da başka dairedeyse) hata yok sayılır.
+pub fn com_mta() {
+    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
+    COM_READY.with(|c| {
+        if !c.replace(true) {
+            // SAFETY: yalnızca çağıran iş parçacığının COM durumunu değiştirir.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            }
+        }
+    });
+}
+
+/// Tek iş parçacıklı daire (STA): kabuk nesneleri (geri dönüşüm kutusu, JumpList,
+/// IShellLink) için.
+pub fn com_sta() {
+    use windows::Win32::System::Com::{COINIT_APARTMENTTHREADED, CoInitializeEx};
+    COM_READY.with(|c| {
+        if !c.replace(true) {
+            // SAFETY: yalnızca çağıran iş parçacığının COM durumunu değiştirir.
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+            }
+        }
+    });
+}
+
+/// Pencerenin sınıf adı (en çok 256 UTF-16 birimi; boşsa pencere yok demektir).
+pub fn class_name(hwnd: HWND) -> String {
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buf = [0u16; 256];
+    // SAFETY: tampon yerel ve yeterli büyüklükte.
+    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
 /// HWND'yi JSON'a ve geri taşımak için sayıya çevirir.
 pub fn hwnd_to_id(h: HWND) -> isize {
     h.0 as isize

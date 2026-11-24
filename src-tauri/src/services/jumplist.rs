@@ -189,12 +189,7 @@ pub fn prewarm() {
     let _ = std::thread::Builder::new()
         .name("jumplist-prewarm".into())
         .spawn(|| {
-            unsafe {
-                let _ = windows::Win32::System::Com::CoInitializeEx(
-                    None,
-                    windows::Win32::System::Com::COINIT_APARTMENTTHREADED,
-                );
-            }
+            crate::win::com_sta();
             apps_folder_ids(false);
         });
 }

@@ -8,9 +8,7 @@
 //!   çalışan pencereyle aynı ikonda gruplanır).
 
 use windows::Win32::Storage::EnhancedStorage::{PKEY_AppUserModel_ID, PKEY_Link_TargetParsingPath};
-use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-};
+use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
 use windows::Win32::UI::Shell::Common::ITEMIDLIST;
 use windows::Win32::UI::Shell::{
     ApplicationActivationManager, IApplicationActivationManager, ILCreateFromPathW, ILFree,
@@ -23,9 +21,7 @@ use crate::error::{AppError, AppResult};
 use crate::win::{take_pwstr, wide};
 
 fn com() {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-    }
+    crate::win::com_sta();
 }
 
 /// Paketli uygulamaların exe'si `WindowsApps` altında; doğrudan başlatılamaz.

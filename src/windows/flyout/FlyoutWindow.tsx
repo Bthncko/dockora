@@ -79,6 +79,8 @@ export function FlyoutWindow() {
       setShown({ data: e.payload, seq: ++seq.current });
       setLeaving(false);
     });
+    // Dinleyici kayıtlıyken haber ver: açılışta erken gelen kart kaybolmasın.
+    un.then(() => commands.flyoutReady()).catch(report("flyout_ready"));
     return () => {
       un.then((off) => off());
     };

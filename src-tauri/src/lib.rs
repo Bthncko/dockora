@@ -162,6 +162,7 @@ pub fn run() {
             commands::preview_notification_sound,
             commands::get_brightness,
             commands::flyout_layout,
+            commands::flyout_ready,
             commands::flyout_hide,
             commands::flyout_hold,
             commands::audio_sessions,
@@ -174,6 +175,7 @@ pub fn run() {
             commands::notify_activate,
             commands::wifi_scan,
             commands::wifi_connect,
+            commands::wifi_connect_enterprise,
             commands::wifi_disconnect,
             commands::bt_devices,
             commands::bt_set_connected,
@@ -202,6 +204,7 @@ pub fn run() {
                 .plugin(tauri_plugin_updater::Builder::new().build())?;
 
             let config_dir = app.path().app_config_dir()?;
+            services::flylog::init(config_dir.clone());
             let config = ConfigStore::load(config_dir.clone());
             i18n::set(&config.get().language);
             config.attach(app.handle().clone());

@@ -23,7 +23,6 @@ use std::time::Duration;
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
 /// Art arda gelen bildirimleri tek okumada birleştirme süresi.
 const COALESCE: Duration = Duration::from_millis(30);
@@ -108,9 +107,7 @@ pub fn spawn<S, C, M, T>(
         .name(name.to_string())
         .spawn(move || {
             // WinRT ve Core Audio için.
-            unsafe {
-                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            }
+            crate::win::com_mta();
             let publish = |next: S| {
                 let handle = app.state::<ServiceHandle<S, C>>();
                 let changed = {

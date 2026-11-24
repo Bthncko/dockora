@@ -20,8 +20,7 @@ use windows::Win32::Graphics::Gdi::{
     DM_DISPLAYFREQUENCY, ENUM_CURRENT_SETTINGS, ENUM_DISPLAY_SETTINGS_MODE, EnumDisplaySettingsW,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-    CoSetProxyBlanket, EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
+    CLSCTX_INPROC_SERVER, CoCreateInstance, CoSetProxyBlanket, EOAC_NONE, RPC_C_AUTHN_LEVEL_CALL, RPC_C_IMP_LEVEL_IMPERSONATE,
 };
 use windows::Win32::System::Power::{
     PowerGetActiveScheme, PowerReadDCValueIndex, PowerSetActiveScheme, PowerWriteDCValueIndex,
@@ -268,7 +267,7 @@ pub fn set_refresh(hz: u32) -> Result<(), String> {
 
 fn wmi() -> Result<IWbemServices, String> {
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        crate::win::com_mta();
         let locator: IWbemLocator =
             CoCreateInstance(&WbemLocator, None, CLSCTX_INPROC_SERVER).map_err(err)?;
         let services = locator

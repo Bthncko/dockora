@@ -7,6 +7,7 @@ pub mod audio_sessions;
 pub mod backdrop;
 pub mod battery_settings;
 pub mod file_drop;
+pub mod flylog;
 pub mod flyouts;
 pub mod http;
 pub mod icons;

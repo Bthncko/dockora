@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use windows::Win32::Foundation::{HWND, POINT, RECT};
 use windows::Win32::Graphics::Gdi::{
-    CreateRectRgn, GetMonitorInfoW, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
+    CreateRectRgn, DeleteObject, GetMonitorInfoW, HGDIOBJ, HRGN, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY,
     MONITORINFO, MonitorFromPoint, RDW_ALLCHILDREN, RDW_INVALIDATE, RDW_UPDATENOW, RedrawWindow,
     SetWindowRgn,
 };
@@ -138,6 +138,15 @@ pub fn set_hidden(hwnd: HWND, hidden: bool) {
     apply_region(hwnd);
 }
 
+/// Bölgeyi pencereye verir. Başarılıysa sahibi sistemdir; başarısızsa biz bırakırız.
+unsafe fn set_region(hwnd: HWND, region: HRGN) {
+    unsafe {
+        if SetWindowRgn(hwnd, Some(region), true) == 0 {
+            let _ = DeleteObject(HGDIOBJ(region.0));
+        }
+    }
+}
+
 fn apply_region(hwnd: HWND) {
     let (expanded, hidden, reserved, pad) = {
         let g = GEOMETRY.lock().unwrap();
@@ -154,7 +163,7 @@ fn apply_region(hwnd: HWND) {
                 Edge::Bottom => CreateRectRgn(0, pad + height - trigger, width, pad + height),
                 Edge::Top => CreateRectRgn(0, 0, width, trigger),
             };
-            SetWindowRgn(hwnd, Some(region), true);
+            set_region(hwnd, region);
         } else if expanded {
             // Bölge yok = tüm pencere.
             SetWindowRgn(hwnd, None, true);
@@ -174,7 +183,7 @@ fn apply_region(hwnd: HWND) {
                 Edge::Bottom => CreateRectRgn(0, pad, width, pad + height),
                 Edge::Top => CreateRectRgn(0, 0, width, height),
             };
-            SetWindowRgn(hwnd, Some(region), true);
+            set_region(hwnd, region);
         }
     }
 }

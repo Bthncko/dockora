@@ -14,7 +14,6 @@ use windows::Web::Http::Filters::{
     HttpBaseProtocolFilter, HttpCacheReadBehavior, HttpCacheWriteBehavior,
 };
 use windows::Web::Http::{HttpClient, HttpMethod, HttpRequestMessage, HttpStringContent};
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::{Error, HSTRING, Interface};
 use windows_future::{AsyncStatus, IAsyncInfo};
 
@@ -42,10 +41,7 @@ pub fn request(
     headers: &[(&str, &str)],
     body: Option<Body>,
 ) -> windows::core::Result<Response> {
-    // SAFETY: bu iş parçacığı için COM başlatma; zaten başlatılmışsa zararsız.
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    crate::win::com_mta();
     let filter = HttpBaseProtocolFilter::new()?;
     let cache = filter.CacheControl()?;
     cache.SetReadBehavior(HttpCacheReadBehavior::NoCache)?;

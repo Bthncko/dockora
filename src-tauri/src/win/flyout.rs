@@ -9,7 +9,9 @@
 //! Ekran: `flyouts.monitor` ("primary" | "cursor" | "focused"). Alt kenarda ve
 //! ana ekranda alan dock'un üstünde biter (`notify::area_in`).
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
@@ -31,6 +33,7 @@ use super::notify::{OFFSET_MAX, Spot, area_in};
 use super::placement;
 use crate::config::ConfigStore;
 use crate::error::{AppError, AppResult};
+use crate::services::flylog::log;
 
 pub const LABEL: &str = "flyout";
 pub const FLYOUT_SHOW: &str = "flyout:show";
@@ -82,25 +85,81 @@ pub fn init(app: &AppHandle) -> AppResult<()> {
     super::window_style::apply_dock_style(&window(app)?)
 }
 
-/// Tam ekran oyun / sunum / "rahatsız etme" gibi durumlar (kart gösterilmez).
-pub fn busy() -> bool {
+/// Sayfa dinleyicisi hazır olmadan gelen kart: en yeni tek olay, bu süreden
+/// eskiyse atılır (geç gelen eski tuş kartı kullanıcıyı şaşırtır).
+const PENDING_MAX_AGE: Duration = Duration::from_secs(3);
+
+struct Pending {
+    /// Sayfa `flyout_ready` dedi mi (dinleyici kayıtlı).
+    ready: bool,
+    latest: Option<(Instant, Show)>,
+}
+
+static PENDING: Mutex<Pending> = Mutex::new(Pending {
+    ready: false,
+    latest: None,
+});
+
+/// Sayfa dinleyicisini kaydetti. Bekleyen (≤ 3 sn) kart varsa şimdi gönderilir.
+pub fn ready(app: &AppHandle) {
+    let mut p = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    p.ready = true;
+    log(&format!(
+        "kart sayfası hazır (bekleyen: {})",
+        if p.latest.is_some() { "var" } else { "yok" }
+    ));
+    if let Some((at, payload)) = p.latest.take() {
+        if at.elapsed() <= PENDING_MAX_AGE {
+            let ok = app.emit_to(LABEL, FLYOUT_SHOW, &payload).is_ok();
+            log(&format!(
+                "bekleyen kart gönderildi (yaş {} ms): {}",
+                at.elapsed().as_millis(),
+                if ok { "ok" } else { "emit hatası" }
+            ));
+        } else {
+            log("bekleyen kart çok eski, atıldı");
+        }
+    }
+}
+
+fn kind_name(p: &Show) -> String {
+    match p {
+        Show::Media { trigger } => format!("media/{trigger}"),
+        Show::NextUp { .. } => "nextUp".into(),
+        Show::LockKey { key, .. } => format!("lockKey/{key}"),
+        Show::Volume { .. } => "volume".into(),
+        Show::Brightness { .. } => "brightness".into(),
+    }
+}
+
+/// Tam ekran oyun / sunum gibi durumlar (kart gösterilmez). Yalnızca
+/// `QUNS_BUSY`, `QUNS_RUNNING_D3D_FULL_SCREEN`, `QUNS_PRESENTATION_MODE`
+/// bastırır; `QUNS_NOT_PRESENT` (oturum açılışında olur), `QUNS_QUIET_TIME`,
+/// `QUNS_ACCEPTS_NOTIFICATIONS`, `QUNS_APP` bastırmaz. Dönüş: (bastır, ham değer).
+pub fn busy() -> (bool, Option<i32>) {
     match unsafe { SHQueryUserNotificationState() } {
-        Ok(state) => matches!(
-            state,
-            QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE
+        Ok(state) => (
+            matches!(
+                state,
+                QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE
+            ),
+            Some(state.0),
         ),
-        Err(_) => false,
+        Err(_) => (false, None),
     }
 }
 
 /// Config'e göre kart gösterilebilir mi; gösterilebilirse `flyout:show` yayınlar.
 /// `app_id`: medya kartlarında oturumun uygulaması (uygulama süzgeci için).
 pub fn show(app: &AppHandle, payload: Show, app_id: Option<&str>) -> bool {
+    let kind = kind_name(&payload);
     let Some(store) = app.try_state::<ConfigStore>() else {
+        log(&format!("show {kind}: reddedildi (ayar deposu yok)"));
         return false;
     };
     let cfg = store.get().flyouts;
     if !cfg.enabled {
+        log(&format!("show {kind}: reddedildi (flyout kapalı)"));
         return false;
     }
     let kind_on = match &payload {
@@ -119,18 +178,40 @@ pub fn show(app: &AppHandle, payload: Show, app_id: Option<&str>) -> bool {
         Show::Brightness { .. } => cfg.brightness.enabled,
     };
     if !kind_on {
+        log(&format!("show {kind}: reddedildi (tür kapalı)"));
         return false;
     }
     if matches!(payload, Show::Media { .. } | Show::NextUp { .. })
         && let Some(id) = app_id
         && !cfg.app_filter.allows(id)
     {
+        log(&format!("show {kind}: reddedildi (uygulama süzgeci, {id})"));
         return false;
     }
-    if cfg.hide_in_fullscreen && busy() {
-        return false;
+    if cfg.hide_in_fullscreen {
+        let (suppress, quns) = busy();
+        if suppress {
+            log(&format!("show {kind}: reddedildi (busy, QUNS={quns:?})"));
+            return false;
+        }
+        log(&format!("show {kind}: busy değil (QUNS={quns:?})"));
     }
-    app.emit_to(LABEL, FLYOUT_SHOW, &payload).is_ok()
+    let mut p = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    if !p.ready {
+        p.latest = Some((Instant::now(), payload));
+        log(&format!("show {kind}: sayfa hazır değil, beklemeye alındı"));
+        return true;
+    }
+    match app.emit_to(LABEL, FLYOUT_SHOW, &payload) {
+        Ok(()) => {
+            log(&format!("show {kind}: gönderildi"));
+            true
+        }
+        Err(e) => {
+            log(&format!("show {kind}: emit hatası: {e}"));
+            false
+        }
+    }
 }
 
 fn monitor_of(mode: &str) -> HMONITOR {
@@ -225,11 +306,6 @@ pub fn hide(app: &AppHandle) -> AppResult<()> {
 
 pub fn hold(held: bool) {
     HELD.store(held, Ordering::SeqCst);
-}
-
-#[allow(dead_code)]
-pub fn is_held() -> bool {
-    HELD.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]

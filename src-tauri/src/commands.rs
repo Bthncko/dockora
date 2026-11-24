@@ -649,6 +649,22 @@ pub async fn wifi_connect(
     result
 }
 
+/// Kurumsal (802.1X) ağ: kullanıcı adı + parola. Hata "cert_trust" ise sunucu
+/// sertifikası Windows'ta onaylanmalı. Parola günlüğe yazılmaz.
+#[tauri::command]
+pub async fn wifi_connect_enterprise(
+    radios: State<'_, RadiosService>,
+    ssid: String,
+    username: String,
+    password: String,
+    auto: bool,
+) -> CmdResult {
+    let result =
+        blocking_str(move || wireless::connect_enterprise(&ssid, &username, &password, auto)).await;
+    radios.wake();
+    result
+}
+
 #[tauri::command]
 pub async fn wifi_disconnect(radios: State<'_, RadiosService>) -> CmdResult {
     let result = blocking_str(wireless::disconnect).await;
@@ -893,6 +909,12 @@ pub fn preview_notification_sound(id: String) {
 pub fn flyout_layout(app: AppHandle, width: f64, height: f64) -> CmdResult {
     crate::win::flyout::layout(&app, width, height)?;
     Ok(())
+}
+
+/// Kart sayfası `flyout:show` dinleyicisini kaydetti; bekleyen kart varsa gider.
+#[tauri::command]
+pub fn flyout_ready(app: AppHandle) {
+    crate::win::flyout::ready(&app);
 }
 
 #[tauri::command]

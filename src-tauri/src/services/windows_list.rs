@@ -11,7 +11,7 @@ use windows::Win32::System::Threading::{
 };
 use windows::Win32::UI::Shell::PropertiesSystem::{IPropertyStore, SHGetPropertyStoreForWindow};
 use windows::Win32::UI::WindowsAndMessaging::{
-    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetClassNameW, GetWindow, GetWindowLongPtrW,
+    EnumWindows, GW_OWNER, GWL_EXSTYLE, GetWindow, GetWindowLongPtrW,
     GetWindowTextLengthW, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
     WS_EX_APPWINDOW, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW,
 };
@@ -83,7 +83,7 @@ fn inspect(hwnd: HWND, own_pid: u32) -> Option<RawWindow> {
         if title.trim().is_empty() {
             return None;
         }
-        if SHELL_CLASSES.contains(&class_name(hwnd).as_str()) {
+        if SHELL_CLASSES.contains(&crate::win::class_name(hwnd).as_str()) {
             return None;
         }
         let mut pid = 0;
@@ -109,12 +109,6 @@ fn window_text(hwnd: HWND) -> String {
         let n = GetWindowTextW(hwnd, &mut buf);
         String::from_utf16_lossy(&buf[..n.max(0) as usize])
     }
-}
-
-fn class_name(hwnd: HWND) -> String {
-    let mut buf = [0u16; 256];
-    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
 }
 
 /// Sürecin exe yolu.

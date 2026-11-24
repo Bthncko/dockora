@@ -17,17 +17,13 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use windows::Win32::Foundation::{CloseHandle, HWND, MAX_PATH};
-use windows::Win32::System::Threading::{
-    OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
-};
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::WindowsAndMessaging::{
-    CHILDID_SELF, EVENT_OBJECT_SHOW, GA_ROOT, GetAncestor, GetClassNameW, GetWindowThreadProcessId,
+    CHILDID_SELF, EVENT_OBJECT_SHOW, GA_ROOT, GetAncestor, GetWindowThreadProcessId,
     IsWindowVisible, OBJID_WINDOW, SW_HIDE, ShowWindow, WINEVENT_OUTOFCONTEXT,
     WINEVENT_SKIPOWNPROCESS,
 };
-use windows::core::PWSTR;
 
 /// Göstergenin çıkabileceği süre: işaretten sonra bu kadar boyunca yeni pencere gizlenir.
 const ARM_FOR: Duration = Duration::from_millis(1500);
@@ -114,12 +110,6 @@ fn hide(hwnd: HWND) {
     }
 }
 
-fn class_of(hwnd: HWND) -> String {
-    let mut buf = [0u16; 128];
-    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
-}
-
 /// Pencerenin sahibi sürecin exe adı (küçük harf).
 fn exe_of(hwnd: HWND) -> Option<String> {
     let mut pid = 0u32;
@@ -127,24 +117,8 @@ fn exe_of(hwnd: HWND) -> Option<String> {
     if pid == 0 {
         return None;
     }
-    unsafe {
-        let process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
-        let mut buf = [0u16; MAX_PATH as usize];
-        let mut len = buf.len() as u32;
-        let ok = QueryFullProcessImageNameW(
-            process,
-            PROCESS_NAME_WIN32,
-            PWSTR(buf.as_mut_ptr()),
-            &mut len,
-        )
-        .is_ok();
-        let _ = CloseHandle(process);
-        if !ok {
-            return None;
-        }
-        let path = String::from_utf16_lossy(&buf[..len as usize]);
-        path.rsplit(['\\', '/']).next().map(str::to_lowercase)
-    }
+    let path = crate::services::windows_list::process_image(pid)?;
+    path.rsplit(['\\', '/']).next().map(str::to_lowercase)
 }
 
 unsafe extern "system" fn on_show(
@@ -166,7 +140,7 @@ unsafe extern "system" fn on_show(
     let now = now_ms();
     if WANT_LOCK.load(Ordering::Relaxed)
         && now < LOCK_UNTIL.load(Ordering::Relaxed)
-        && class_of(hwnd).starts_with("Qt")
+        && super::class_name(hwnd).starts_with("Qt")
         && exe_of(hwnd).as_deref() == Some(LOGI_EXE)
     {
         hide(hwnd);
@@ -177,7 +151,7 @@ unsafe extern "system" fn on_show(
     if !(brightness || volume) {
         return;
     }
-    let class = class_of(hwnd);
+    let class = super::class_name(hwnd);
     if !SHELL_CLASSES.contains(&class.as_str())
         || !exe_of(hwnd).is_some_and(|e| SHELL_EXES.contains(&e.as_str()))
     {

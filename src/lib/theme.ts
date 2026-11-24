@@ -10,17 +10,31 @@ export function resolveAccent(theme: Config["theme"], systemAccent?: string | nu
   return theme.accent === "auto" ? (systemAccent ?? FALLBACK_ACCENT) : theme.accent;
 }
 
-/** Hex renk açık mı (göreli parlaklık > 0.5)? Okunamazsa koyu varsayılır. */
-export function isLightColor(color: string) {
+/** Hex rengin göreli parlaklığı (0–1); okunamazsa `null`. */
+function luminance(color: string) {
   const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
-  if (!m) return false;
+  if (!m) return null;
   let h = m[1];
   if (h.length === 3) h = [...h].map((c) => c + c).join("");
   const ch = [0, 2, 4].map((i) => {
     const v = parseInt(h.slice(i, i + 2), 16) / 255;
     return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
   });
-  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2] > 0.4;
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+
+/** Hex renk açık mı (göreli parlaklık > 0.4)? Okunamazsa koyu varsayılır. */
+export function isLightColor(color: string) {
+  return (luminance(color) ?? 0) > 0.4;
+}
+
+/**
+ * Vurgu zeminindeki metin rengi: koyu `--on-accent` ile beyazdan hangisi daha
+ * okunaklıysa (kesişim ≈ 0.19). Böylece koyu bir vurguda koyu yazı kaybolmaz.
+ */
+function onAccent(color: string) {
+  const l = luminance(color);
+  return l !== null && l < 0.19 ? "#ffffff" : "#0b1220";
 }
 
 /** Boyut ayarı, sınırlar içinde (Rust → `Theme::ui_scale` ile aynı). */
@@ -69,6 +83,7 @@ export function applyTheme(theme: Config["theme"], options: Options = {}) {
   const alpha = luma === undefined ? 1 : 0.45 + 0.35 * Math.min(Math.max(luma, 0), 1);
   const accent = resolveAccent(theme, systemAccent);
   root.setProperty("--accent", accent);
+  root.setProperty("--on-accent", onAccent(accent));
   root.setProperty("--on-accent-knob", isLightColor(accent) ? "#14181f" : "#ffffff");
   root.setProperty("--glass-opacity", opacity.toFixed(3));
   root.setProperty("--glass-alpha", alpha.toFixed(3));

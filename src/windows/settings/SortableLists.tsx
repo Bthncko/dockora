@@ -66,7 +66,7 @@ export function SortableLists({
   };
 
   return (
-    <div className={styles.lists} style={{ gridTemplateColumns: `repeat(${lists.length}, 1fr)` }}>
+    <div className={styles.lists} style={{ gridTemplateColumns: `repeat(${lists.length}, minmax(0, 1fr))` }}>
       {lists.map((list) => {
         const indicatorAt = over?.list === list.key ? over.index : -1;
         const indicator = <li key="__indicator" className={styles.dropLine} aria-hidden />;

@@ -15,7 +15,7 @@
 //! `HWND_BROADCAST` da yalnızca üst düzey pencerelere gider; burada da öyle.
 
 use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetClassNameW, SendNotifyMessageW};
+use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, SendNotifyMessageW};
 use windows::core::BOOL;
 
 /// Her yayında atlananlar.
@@ -36,7 +36,7 @@ pub enum Skip {
 /// İşaretçi taşıyan sistem iletileri için değil (`lp` başka sürece taşınmaz).
 pub fn send(msg: u32, wp: WPARAM, lp: LPARAM, skip: Skip) {
     for hwnd in top_level() {
-        let class = class_name(hwnd);
+        let class = super::class_name(hwnd);
         let skipped = SKIP_ALWAYS.contains(&class.as_str())
             || (matches!(skip, Skip::WallpaperAndDesktop)
                 && SKIP_DESKTOP.contains(&class.as_str()));
@@ -61,8 +61,3 @@ fn top_level() -> Vec<HWND> {
     out
 }
 
-fn class_name(hwnd: HWND) -> String {
-    let mut buf = [0u16; 64];
-    let n = unsafe { GetClassNameW(hwnd, &mut buf) };
-    String::from_utf16_lossy(&buf[..n.max(0) as usize])
-}

@@ -19,6 +19,8 @@
 
 use std::collections::HashMap;
 
+mod wlan_native;
+
 use serde::Serialize;
 use windows::Devices::Bluetooth::BluetoothCacheMode;
 use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
@@ -30,7 +32,6 @@ use windows::Security::Credentials::PasswordCredential;
 use windows::Win32::Devices::Bluetooth::{
     BLUETOOTH_DEVICE_INFO, BluetoothGetDeviceInfo, BluetoothSetServiceState,
 };
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::{GUID, HSTRING};
 
 #[derive(Debug, Clone, Serialize)]
@@ -41,7 +42,7 @@ pub struct WifiNetwork {
     pub bars: u8,
     /// Şifre ister (kurumsal ağlar hariç).
     pub secured: bool,
-    /// Kullanıcı adı isteyen kurumsal ağ: panel Windows ayarlarını açar.
+    /// Kullanıcı adı + parola isteyen kurumsal (802.1X) ağ.
     pub enterprise: bool,
     /// Daha önce bağlanılmış (kayıtlı profil var).
     pub saved: bool,
@@ -62,9 +63,7 @@ pub struct BtDevice {
 }
 
 fn com() {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    crate::win::com_mta();
 }
 
 fn adapter() -> Result<WiFiAdapter, String> {
@@ -157,6 +156,90 @@ pub fn scan() -> Result<Vec<WifiNetwork>, String> {
 /// Son taramadaki ağa bağlanır. Şifreli ve kayıtsız ağda `password` gerekir;
 /// yoksa "password_required" hatası döner (panel şifre sorar).
 pub fn connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
+    connect_with(ssid, None, password, true)
+}
+
+/// Kurumsal (802.1X, ör. PEAP-MSCHAPv2) ağa kullanıcı adı + parola ile bağlanır.
+/// Parola yalnızca Windows'a verilir (profili Windows saklar); günlüğe yazılmaz.
+/// Sunucu sertifikası doğrulaması Windows'un varsayılanıyla kalır.
+pub fn connect_enterprise(
+    ssid: &str,
+    username: &str,
+    password: &str,
+    auto: bool,
+) -> Result<(), String> {
+    if username.trim().is_empty() || password.is_empty() {
+        return Err("Kullanıcı adı ve parola gerekli".into());
+    }
+    let username = username.trim();
+    // Önce WinRT; bu yol sonuç vermezse (belirsiz hata, zaman aşımı, desteklenmeyen
+    // protokol ya da WinRT hatası) Native WiFi yedek yoluna düşülür. Kimlik
+    // bilgisi reddi ve erişim engeli kesin sonuçtur, yedek denenmez.
+    match winrt_connect(ssid, Some(username), Some(password), auto) {
+        Ok(
+            status @ (WiFiConnectionStatus::Success
+            | WiFiConnectionStatus::InvalidCredential
+            | WiFiConnectionStatus::AccessRevoked
+            | WiFiConnectionStatus::NetworkNotAvailable),
+        ) => status_result(status, false, true),
+        Ok(_) | Err(_) => match wlan_native::connect(ssid, username, password, auto) {
+            Ok(()) => Ok(()),
+            Err(wlan_native::NativeError::Credentials) => {
+                Err("Kullanıcı adı ya da parola yanlış".into())
+            }
+            Err(wlan_native::NativeError::CertTrust) => Err("cert_trust".into()),
+            Err(wlan_native::NativeError::NotVisible) => Err("Ağ artık görünmüyor".into()),
+            Err(wlan_native::NativeError::Other(m)) => Err(m),
+        },
+    }
+}
+
+fn connect_with(
+    ssid: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+    auto: bool,
+) -> Result<(), String> {
+    let status = winrt_connect(ssid, username, password, auto)?;
+    status_result(status, password.is_none(), username.is_some())
+}
+
+fn status_result(
+    status: WiFiConnectionStatus,
+    no_password: bool,
+    enterprise: bool,
+) -> Result<(), String> {
+    match status {
+        WiFiConnectionStatus::Success => Ok(()),
+        WiFiConnectionStatus::InvalidCredential if no_password => {
+            Err("password_required".into())
+        }
+        WiFiConnectionStatus::InvalidCredential if enterprise => {
+            Err("Kullanıcı adı ya da parola yanlış".into())
+        }
+        WiFiConnectionStatus::InvalidCredential => Err("Şifre yanlış".into()),
+        WiFiConnectionStatus::NetworkNotAvailable => Err("Ağ artık görünmüyor".into()),
+        // Kurumsal ağda zaman aşımı / belirsiz hata çoğunlukla sunucu sertifikasının
+        // Windows'ta henüz onaylanmamasıdır; ayrı hata kodu panelde yönlendirir.
+        WiFiConnectionStatus::Timeout | WiFiConnectionStatus::UnspecifiedFailure if enterprise => {
+            Err("cert_trust".into())
+        }
+        WiFiConnectionStatus::Timeout => Err("Bağlantı zaman aşımına uğradı".into()),
+        WiFiConnectionStatus::AccessRevoked => Err("Erişim reddedildi".into()),
+        WiFiConnectionStatus::UnsupportedAuthenticationProtocol => {
+            Err("Bu ağın güvenlik türü desteklenmiyor".into())
+        }
+        _ => Err("Bağlanılamadı".into()),
+    }
+}
+
+/// WinRT ile bağlanır ve ham durumu döndürür.
+fn winrt_connect(
+    ssid: &str,
+    username: Option<&str>,
+    password: Option<&str>,
+    auto: bool,
+) -> Result<WiFiConnectionStatus, String> {
     com();
     let adapter = adapter()?;
     let report = adapter
@@ -168,37 +251,29 @@ pub fn connect(ssid: &str, password: Option<&str>) -> Result<(), String> {
         .filter(|n| n.Ssid().map(|s| s.to_string()).as_deref() == Ok(ssid))
         .max_by_key(|n| n.SignalBars().unwrap_or(0))
         .ok_or("ağ artık görünmüyor")?;
+    let kind = if auto {
+        WiFiReconnectionKind::Automatic
+    } else {
+        WiFiReconnectionKind::Manual
+    };
     let op = match password {
         Some(p) => {
             let cred = PasswordCredential::new().map_err(|e| e.message())?;
+            if let Some(u) = username {
+                cred.SetUserName(&HSTRING::from(u))
+                    .map_err(|e| e.message())?;
+            }
             cred.SetPassword(&HSTRING::from(p))
                 .map_err(|e| e.message())?;
-            adapter.ConnectWithPasswordCredentialAsync(
-                &network,
-                WiFiReconnectionKind::Automatic,
-                &cred,
-            )
+            adapter.ConnectWithPasswordCredentialAsync(&network, kind, &cred)
         }
-        None => adapter.ConnectAsync(&network, WiFiReconnectionKind::Automatic),
+        None => adapter.ConnectAsync(&network, kind),
     };
     let status = op
         .and_then(|o| o.join())
         .and_then(|r| r.ConnectionStatus())
         .map_err(|e| e.message())?;
-    match status {
-        WiFiConnectionStatus::Success => Ok(()),
-        WiFiConnectionStatus::InvalidCredential if password.is_none() => {
-            Err("password_required".into())
-        }
-        WiFiConnectionStatus::InvalidCredential => Err("Şifre yanlış".into()),
-        WiFiConnectionStatus::NetworkNotAvailable => Err("Ağ artık görünmüyor".into()),
-        WiFiConnectionStatus::Timeout => Err("Bağlantı zaman aşımına uğradı".into()),
-        WiFiConnectionStatus::AccessRevoked => Err("Erişim reddedildi".into()),
-        WiFiConnectionStatus::UnsupportedAuthenticationProtocol => {
-            Err("Bu ağın güvenlik türü desteklenmiyor".into())
-        }
-        _ => Err("Bağlanılamadı".into()),
-    }
+    Ok(status)
 }
 
 pub fn disconnect() -> Result<(), String> {

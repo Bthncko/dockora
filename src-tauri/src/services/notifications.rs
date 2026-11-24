@@ -38,7 +38,6 @@ use windows::UI::Notifications::{
 };
 use windows::Win32::Foundation::{HANDLE, WAIT_OBJECT_0};
 use windows::Win32::Media::Audio::{PlaySoundW, SND_ALIAS, SND_ASYNC, SND_NODEFAULT};
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::Win32::System::Registry::{
     HKEY, HKEY_CURRENT_USER, KEY_NOTIFY, REG_NOTIFY_CHANGE_LAST_SET, RegNotifyChangeKeyValue,
     RegOpenKeyExW,
@@ -141,10 +140,12 @@ pub fn spawn(app: &AppHandle, config_dir: PathBuf, enabled: bool) {
         restore_sounds();
     }
     let app = app.clone();
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("notifications".into())
         .spawn(move || run(app))
-        .expect("notifications başlatılamadı");
+    {
+        eprintln!("[notify] iş parçacığı başlatılamadı: {e}");
+    }
 }
 
 /// Ayar değişti: kutucukları kapat ya da Windows'unkileri geri getir.
@@ -415,9 +416,7 @@ fn sound_allowed() -> bool {
 // --- okuma -----------------------------------------------------------------------------
 
 fn run(app: AppHandle) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    crate::win::com_mta();
     let listener = match UserNotificationListener::Current() {
         Ok(l) => l,
         Err(e) => {
@@ -445,7 +444,9 @@ fn run(app: AppHandle) {
             Ok(())
         }))
         .is_ok();
-    eprintln!("[notify] dinleniyor (olay: {events}, kayıt izleme: {watching})");
+    if cfg!(debug_assertions) {
+        eprintln!("[notify] dinleniyor (olay: {events}, kayıt izleme: {watching})");
+    }
     let _ = LISTENER.set(listener.clone());
 
     WORKING.store(true, Ordering::Relaxed);
@@ -527,6 +528,9 @@ fn watch_registry(tx: mpsc::Sender<()>) -> bool {
         return false;
     }
     let Ok(event) = (unsafe { CreateEventW(None, false, false, None) }) else {
+        unsafe {
+            let _ = windows::Win32::System::Registry::RegCloseKey(key);
+        }
         return false;
     };
     // Tutamaçlar iş parçacıkları arasında sayı olarak taşınır.
@@ -552,6 +556,11 @@ fn watch_registry(tx: mpsc::Sender<()>) -> bool {
                 {
                     break;
                 }
+            }
+            // Döngü bitti (kayıt düştü / alıcı kapandı): tutamaçları bırak.
+            unsafe {
+                let _ = windows::Win32::Foundation::CloseHandle(event);
+                let _ = windows::Win32::System::Registry::RegCloseKey(key);
             }
         })
         .is_ok()

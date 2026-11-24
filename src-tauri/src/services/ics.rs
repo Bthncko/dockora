@@ -9,7 +9,6 @@
 use windows::Foundation::Uri;
 use windows::Web::Http::Filters::{HttpBaseProtocolFilter, HttpCacheReadBehavior};
 use windows::Web::Http::HttpClient;
-use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 use windows::core::HSTRING;
 
 use crate::error::{AppError, AppResult};
@@ -17,10 +16,7 @@ use crate::error::{AppError, AppResult};
 /// Bekleyen bir iş parçacığında çağrılmalı (ağ isteği bitene kadar bekler).
 pub fn fetch(url: &str) -> AppResult<String> {
     let url = normalize(url)?;
-    // SAFETY: bu iş parçacığı için COM başlatma; zaten başlatılmışsa zararsız.
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    crate::win::com_mta();
     let filter = HttpBaseProtocolFilter::new()?;
     // Önbellekteki eski kopya değil, sunucudaki güncel takvim.
     filter

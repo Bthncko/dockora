@@ -66,6 +66,28 @@ function useThrottle<A extends unknown[]>(fn: (...a: A) => void, ms = 60) {
   };
 }
 
+/**
+ * Sürükleme bırakıldıktan `ms` sonrasına kadar açık kalan bayrak (sunucudan gelen
+ * eski değer sürüklenen değerin üstüne yazılmasın). Yeni sürükleme önceki süreyi
+ * iptal eder; kaldırılırken zamanlayıcı temizlenir.
+ */
+function useHold(ms: number) {
+  const flag = useRef(false);
+  const timer = useRef(0);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  return {
+    flag,
+    hold() {
+      window.clearTimeout(timer.current);
+      flag.current = true;
+    },
+    release() {
+      window.clearTimeout(timer.current);
+      timer.current = window.setTimeout(() => (flag.current = false), ms);
+    },
+  };
+}
+
 // --- ses satırı ------------------------------------------------------------------
 
 type Vol = { level: number; muted: boolean; device: string };
@@ -152,7 +174,7 @@ export function VolumeCard({ cfg, init }: { cfg: FlyoutsConfig["volume"]; init: 
 
 function Mixer({ highlight }: { highlight: boolean }) {
   const [rows, setRows] = useState<AudioSession[] | null>(null);
-  const editing = useRef(false);
+  const { flag: editing, hold, release } = useHold(400);
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -168,7 +190,7 @@ function Mixer({ highlight }: { highlight: boolean }) {
       alive = false;
       window.clearInterval(id);
     };
-  }, []);
+  }, [editing]);
   const patch = (id: string, p: Partial<AudioSession>) =>
     setRows((rs) => rs?.map((r) => (r.id === id ? { ...r, ...p } : r)) ?? rs);
   const send = useThrottle((id: string, v: number) =>
@@ -200,7 +222,7 @@ function Mixer({ highlight }: { highlight: boolean }) {
             label={r.name}
             value={r.muted ? 0 : r.volume / 100}
             onChange={(v) => {
-              editing.current = true;
+              hold();
               patch(r.id, { volume: Math.round(v * 100), muted: false });
               send(r.id, Math.round(v * 100));
             }}
@@ -208,7 +230,7 @@ function Mixer({ highlight }: { highlight: boolean }) {
               commands
                 .setSessionVolume(r.id, Math.round(v * 100))
                 .catch(report("set_session_volume"));
-              window.setTimeout(() => (editing.current = false), 400);
+              release();
             }}
           />
           <button
@@ -374,7 +396,7 @@ export function MediaCard({
 
   // Zaman çizelgesi: kart görünürken ~500 ms'de bir.
   const [tl, setTl] = useState<MediaTimeline>(null);
-  const seeking = useRef(false);
+  const { flag: seeking, hold: holdSeek, release: releaseSeek } = useHold(600);
   useEffect(() => {
     if (!cfg.showSeekbar) return;
     let alive = true;
@@ -389,7 +411,7 @@ export function MediaCard({
       alive = false;
       window.clearInterval(id);
     };
-  }, [cfg.showSeekbar]);
+  }, [cfg.showSeekbar, seeking]);
   const [dragPos, setDragPos] = useState<number | null>(null);
 
   const compact = cfg.compact;
@@ -461,14 +483,14 @@ export function MediaCard({
               label={t("Konum")}
               value={pos / dur}
               onChange={(v) => {
-                seeking.current = true;
+                holdSeek();
                 setDragPos(v * dur);
               }}
               onCommit={(v) => {
                 commands.mediaSeek(Math.round(v * dur)).catch(report("media_seek"));
                 setTl({ ...tl, positionMs: v * dur });
                 setDragPos(null);
-                window.setTimeout(() => (seeking.current = false), 600);
+                releaseSeek();
               }}
             />
             <span className={styles.time}>{fmt(dur)}</span>

@@ -125,16 +125,13 @@ pub fn friendly_name(device: &IMMDevice) -> Option<String> {
 mod tests {
     use super::*;
     use windows::Win32::Media::Audio::{eCapture, eRender};
-    use windows::Win32::System::Com::{COINIT_MULTITHREADED, CoInitializeEx};
 
     /// Deneme (elle): `cargo test policy_config_noop -- --ignored --nocapture`.
     /// Varsayılan çıkışı yine kendisine atar: ses başka yere geçmez.
     #[test]
     #[ignore]
     fn policy_config_noop() {
-        unsafe {
-            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-        }
+        crate::win::com_mta();
         let e = enumerator().unwrap();
         let outputs = list(&e, eRender);
         let inputs = list(&e, eCapture);

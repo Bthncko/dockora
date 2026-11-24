@@ -17,7 +17,7 @@ use windows::Win32::Media::Audio::{
     AudioSessionStateActive, AudioSessionStateExpired, IAudioSessionControl, IAudioSessionControl2,
     IAudioSessionManager2, ISimpleAudioVolume, eMultimedia, eRender,
 };
-use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoInitializeEx};
+use windows::Win32::System::Com::CLSCTX_ALL;
 use windows::core::Interface;
 
 use super::{audio_devices, icons, windows_list};
@@ -54,7 +54,7 @@ pub fn ensure_com() {
     COM.with(|c| {
         if !c.replace(true) {
             // Başka kipte başlatılmışsa hata döner; kullanılabilir kalır.
-            let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+            crate::win::com_mta();
         }
     });
 }

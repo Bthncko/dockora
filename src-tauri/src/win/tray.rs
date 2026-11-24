@@ -102,9 +102,7 @@ fn place(
 /// tetikler (çubuk gizli olsa da çalışır; tuş göndermez, Başlat'ı açmaz).
 /// `true`: ok bulundu ve tetiklendi.
 pub fn invoke_chevron() -> bool {
-    use windows::Win32::System::Com::{
-        CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-    };
+    use windows::Win32::System::Com::{CLSCTX_INPROC_SERVER, CoCreateInstance};
     use windows::Win32::UI::Accessibility::{
         CUIAutomation, IUIAutomation, IUIAutomationInvokePattern, TreeScope_Descendants,
         UIA_InvokePatternId,
@@ -114,8 +112,7 @@ pub fn invoke_chevron() -> bool {
         return false;
     };
     unsafe {
-        // Zaten başlatılmış olabilir (başka kipte): sorun değil.
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        super::com_mta();
         let Ok(auto) =
             CoCreateInstance::<_, IUIAutomation>(&CUIAutomation, None, CLSCTX_INPROC_SERVER)
         else {

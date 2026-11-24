@@ -105,9 +105,6 @@ unsafe extern "system" fn on_power_setting(
             let data = unsafe { std::ptr::read_unaligned(base.add(20) as *const u32) };
             if guid == GUID_ENERGY_SAVER_STATUS {
                 ENERGY_SAVER.store(data, Ordering::Relaxed);
-                eprintln!("[power] enerji tasarrufu bildirimi: {data}");
-            } else if guid == GUID_POWER_SAVING_STATUS {
-                eprintln!("[power] pil tasarrufu bildirimi: {data}");
             }
         }
     }

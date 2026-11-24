@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { commands, events, report, type MediaState } from "../../lib/ipc";
 import { useService } from "../../lib/useService";
 import { togglePopup } from "../../lib/popup";
@@ -52,6 +52,7 @@ function useWheelVolume(enabled: boolean) {
   const pending = useRef(0);
   const busy = useRef(false);
   const hide = useRef(0);
+  useEffect(() => () => window.clearTimeout(hide.current), []);
 
   const show = (text: string) => {
     setOsd((o) => ({ text, key: (o?.key ?? 0) + 1 }));

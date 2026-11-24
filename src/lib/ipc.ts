@@ -623,6 +623,8 @@ export const commands = {
   /** Flyout penceresi: içerik boyutu (CSS px, tam pencere); konumlar ve gösterir. 0 → gizle. */
   flyoutLayout: (width: number, height: number) =>
     invoke<void>("flyout_layout", { width, height }),
+  /** Kart sayfası dinleyicisini kaydetti (bekleyen kart varsa gönderilir). */
+  flyoutReady: () => invoke<void>("flyout_ready"),
   flyoutHide: () => invoke<void>("flyout_hide"),
   /** İmleç kartın üzerinde: Rust tarafına bilgi (otomatik gizleme sayfada). */
   flyoutHold: (hold: boolean) => invoke<void>("flyout_hold", { hold }),
@@ -644,6 +646,9 @@ export const commands = {
   /** Şifre isteyen kayıtsız ağda `password` yoksa hata "password_required". */
   wifiConnect: (ssid: string, password?: string) =>
     invoke<void>("wifi_connect", { ssid, password: password ?? null }),
+  /** Kurumsal (802.1X) ağ. Hata "cert_trust": sunucu sertifikasını Windows'ta onayla. */
+  wifiConnectEnterprise: (ssid: string, username: string, password: string, auto: boolean) =>
+    invoke<void>("wifi_connect_enterprise", { ssid, username, password, auto }),
   wifiDisconnect: () => invoke<void>("wifi_disconnect"),
   btDevices: () => invoke<BtDevice[]>("bt_devices"),
   /** Hata "use_settings" ise bu aygıt programla ayrılamaz: Windows ayarlarını aç. */

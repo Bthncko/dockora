@@ -22,7 +22,7 @@ use tauri::{AppHandle, Manager as _};
 use windows::Win32::Foundation::{HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM};
 use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
 use windows::Win32::Media::Audio::{eMultimedia, eRender};
-use windows::Win32::System::Com::{CLSCTX_ALL, COINIT_MULTITHREADED, CoInitializeEx};
+use windows::Win32::System::Com::{CLSCTX_ALL};
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::System::Power::{
     DEVICE_NOTIFY_SUBSCRIBE_PARAMETERS, PowerSettingRegisterNotification,
@@ -49,6 +49,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::core::w;
 
 use super::audio_devices;
+use super::flylog::log;
 use super::media;
 use crate::config::{Config, ConfigStore};
 use crate::win::flyout::{self, Show};
@@ -166,6 +167,10 @@ pub fn sync(config: &Config) {
     // zaten yutulduğu için Windows'un ses göstergesi çıkmaz.
     osd_guard::set_wanted(mask != 0, false, false);
     WANT_HOOK.store(f.enabled, Ordering::SeqCst);
+    log(&format!(
+        "sync: enabled={} media={} volume={} kilit maskesi={mask:#06b}",
+        f.enabled, f.media.enabled, f.volume.enabled
+    ));
     let tid = HOOK_THREAD.load(Ordering::SeqCst);
     if tid != 0 {
         unsafe {
@@ -180,6 +185,7 @@ pub fn spawn(app: &AppHandle) {
         return;
     }
     epoch();
+    log("flyout servisi başlatılıyor");
     let handle = app.clone();
     if let Err(e) = thread::Builder::new()
         .name("flyout-worker".into())
@@ -276,8 +282,14 @@ fn apply_hook(hook: &mut Option<HHOOK>) {
             (true, false) => {
                 let module = GetModuleHandleW(None).map(|m| HINSTANCE(m.0)).ok();
                 match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0) {
-                    Ok(h) => *hook = Some(h),
-                    Err(e) => eprintln!("[flyout] klavye kancası kurulamadı: {e}"),
+                    Ok(h) => {
+                        *hook = Some(h);
+                        log("klavye kancası kuruldu");
+                    }
+                    Err(e) => {
+                        eprintln!("[flyout] klavye kancası kurulamadı: {e}");
+                        log(&format!("klavye kancası KURULAMADI: {e}"));
+                    }
                 }
             }
             (false, true) => {
@@ -348,8 +360,21 @@ impl Inputs {
                 },
             };
             match unsafe { RegisterRawInputDevices(&[dev], size_of::<RAWINPUTDEVICE>() as u32) } {
-                Ok(()) => self.raw = want_raw,
-                Err(e) => eprintln!("[flyout] ham girdi kaydedilemedi: {e}"),
+                Ok(()) => {
+                    self.raw = want_raw;
+                    log(&format!(
+                        "ham girdi {}",
+                        if want_raw {
+                            "kaydedildi"
+                        } else {
+                            "kaldırıldı"
+                        }
+                    ));
+                }
+                Err(e) => {
+                    eprintln!("[flyout] ham girdi kaydedilemedi: {e}");
+                    log(&format!("ham girdi KAYDEDİLEMEDİ: {e}"));
+                }
             }
         }
         let mut want: Vec<u32> = Vec::new();
@@ -369,10 +394,16 @@ impl Inputs {
         let have = std::mem::take(&mut self.hotkeys);
         for vk in want {
             // Başka uygulama aynı tuşu almışsa kanca yolu yine çalışır.
-            if have.contains(&vk)
-                || unsafe { RegisterHotKey(None, vk as i32, HOT_KEY_MODIFIERS(0), vk) }.is_ok()
-            {
+            if have.contains(&vk) {
                 self.hotkeys.push(vk);
+                continue;
+            }
+            match unsafe { RegisterHotKey(None, vk as i32, HOT_KEY_MODIFIERS(0), vk) } {
+                Ok(()) => {
+                    self.hotkeys.push(vk);
+                    log(&format!("kısayol kaydedildi vk={vk:#04x}"));
+                }
+                Err(e) => log(&format!("kısayol KAYDEDİLEMEDİ vk={vk:#04x}: {e}")),
             }
         }
     }
@@ -436,6 +467,11 @@ impl Inputs {
         if !up && is_skip_key(vk) {
             mark_user_skip();
         }
+        if up && lock_bit(vk) != 0 && lock_bit(vk) & LOCK_MASK.load(Ordering::Relaxed) == 0 {
+            log(&format!(
+                "kilit tuşu vk={vk:#04x} yok sayıldı (maske kapalı)"
+            ));
+        }
         if lock_bit(vk) & LOCK_MASK.load(Ordering::Relaxed) != 0 {
             // Üçüncü taraf kilit göstergesi tuşla birlikte açılır: önce hazırla.
             osd_guard::arm(Kind::Lock);
@@ -447,6 +483,7 @@ impl Inputs {
 }
 
 fn hook_thread() {
+    log("kanca iş parçacığı başladı");
     unsafe {
         let mut msg = MSG::default();
         // İleti kuyruğunu oluştur, sonra iş parçacığı kimliğini duyur.
@@ -477,6 +514,9 @@ fn hook_thread() {
                         let _ = UnhookWindowsHookEx(h);
                     }
                     apply_hook(&mut hook);
+                    if hook.is_none() && WANT_HOOK.load(Ordering::SeqCst) {
+                        log("kanca yenileme BAŞARISIZ (kanca yok)");
+                    }
                 }
                 _ => {
                     let _ = TranslateMessage(&msg);
@@ -524,9 +564,7 @@ fn replay(vk: u32) {
 // --- işçi ---------------------------------------------------------------------
 
 fn worker(app: AppHandle, rx: mpsc::Receiver<Event>) {
-    unsafe {
-        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-    }
+    crate::win::com_mta();
     while let Ok(event) = rx.recv() {
         match event {
             Event::Key(vk) => {
@@ -549,18 +587,31 @@ fn config(app: &AppHandle) -> crate::config::FlyoutsConfig {
 fn handle_key(app: &AppHandle, vk: u32) -> bool {
     let cfg = config(app);
     if !cfg.enabled {
+        log(&format!(
+            "tuş vk={vk:#04x}: flyout kapalı, Windows'a verildi"
+        ));
         return false;
     }
     let is = |k: VIRTUAL_KEY| vk == u32::from(k.0);
-    if is(VK_VOLUME_UP) || is(VK_VOLUME_DOWN) || is(VK_VOLUME_MUTE) {
+    let handled = if is(VK_VOLUME_UP) || is(VK_VOLUME_DOWN) || is(VK_VOLUME_MUTE) {
         cfg.volume.enabled && volume_key(app, vk, &cfg)
     } else {
         cfg.media.enabled && media_key(app, vk)
-    }
+    };
+    log(&format!(
+        "tuş vk={vk:#04x}: {}",
+        if handled {
+            "işlendi"
+        } else {
+            "işlenemedi, Windows'a verildi"
+        }
+    ));
+    handled
 }
 
 fn media_key(app: &AppHandle, vk: u32) -> bool {
     let Some((session, app_id)) = media::current_session() else {
+        log("medya tuşu: geçerli medya oturumu yok (GSMTC)");
         return false;
     };
     let op = match VIRTUAL_KEY(vk as u16) {
@@ -588,6 +639,7 @@ fn media_key(app: &AppHandle, vk: u32) -> bool {
 
 fn volume_key(app: &AppHandle, vk: u32, cfg: &crate::config::FlyoutsConfig) -> bool {
     let Some((level, muted, device)) = step_volume(vk) else {
+        log("ses tuşu: varsayılan çıkış okunamadı / ayarlanamadı");
         return false;
     };
     osd_guard::arm(Kind::Volume);
@@ -662,6 +714,7 @@ fn join_timeout(op: windows::core::Result<windows_future::IAsyncOperation<bool>>
 }
 
 fn handle_lock(app: &AppHandle, vk: u32) {
+    log(&format!("kilit tuşu vk={vk:#04x}"));
     let (key, on) = match VIRTUAL_KEY(vk as u16) {
         VK_CAPITAL => ("caps", toggled(VK_CAPITAL)),
         VK_NUMLOCK => ("num", toggled(VK_NUMLOCK)),

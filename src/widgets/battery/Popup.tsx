@@ -61,7 +61,14 @@ export function BatteryPopup() {
     commands.getBatterySettings().then(setSettings).catch(report("get_battery_settings"));
 
   useEffect(() => {
-    commands.getBatterySettings().then(setSettings).catch(report("get_battery_settings"));
+    let alive = true;
+    commands
+      .getBatterySettings()
+      .then((s) => alive && setSettings(s))
+      .catch(report("get_battery_settings"));
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const run = (p: Promise<void>) => {

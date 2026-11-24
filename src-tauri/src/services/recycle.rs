@@ -4,9 +4,7 @@
 use std::time::Duration;
 
 use serde::Serialize;
-use windows::Win32::System::Com::{
-    CLSCTX_ALL, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
-};
+use windows::Win32::System::Com::{CLSCTX_ALL, CoCreateInstance};
 use windows::Win32::UI::Shell::{
     FILEOPERATION_FLAGS, FOF_ALLOWUNDO, FOF_NOCONFIRMATION, FOF_WANTNUKEWARNING,
     FOFX_ADDUNDORECORD, FOFX_RECYCLEONDELETE, FileOperation, IFileOperation, IShellItem,
@@ -91,7 +89,7 @@ unsafe fn recycle_sta(paths: &[String]) -> AppResult<usize> {
     let fail =
         |e: windows::core::Error| AppError::Win32(format!("çöpe atılamadı: {}", e.message()));
     unsafe {
-        let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        crate::win::com_sta();
         let op: IFileOperation =
             CoCreateInstance(&FileOperation, None, CLSCTX_ALL).map_err(fail)?;
         op.SetOperationFlags(FILEOPERATION_FLAGS(

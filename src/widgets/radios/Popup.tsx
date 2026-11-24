@@ -167,6 +167,39 @@ function Network({
   const [error, setError] = useState<string | null>(null);
   const [askPassword, setAskPassword] = useState(n.secured && !n.saved);
   const [password, setPassword] = useState("");
+  const [username, setUsername] = useState("");
+  const [showPw, setShowPw] = useState(false);
+  const [auto, setAuto] = useState(true);
+  const [certTrust, setCertTrust] = useState(false);
+
+  const connectEnterprise = () => {
+    if (!username.trim() || !password) return;
+    setBusy(true);
+    setError(null);
+    setCertTrust(false);
+    commands
+      .wifiConnectEnterprise(n.ssid, username.trim(), password, auto)
+      .then(() => {
+        setUsername("");
+      })
+      .catch((e) => {
+        const raw = e instanceof Error ? e.message : String(e);
+        if (raw === "cert_trust") {
+          setCertTrust(true);
+          setError(
+            t(
+              "Bağlanılamadı. Ağın sunucu sertifikasını Windows'ta bir kez onaylamanız gerekebilir.",
+            ),
+          );
+        } else setError(errText(e));
+      })
+      .finally(() => {
+        // Parola bellekte tutulmasın.
+        setPassword("");
+        setShowPw(false);
+        setBusy(false);
+      });
+  };
 
   const connect = (pw?: string) => {
     setBusy(true);
@@ -232,9 +265,58 @@ function Network({
               {t("Bağlantıyı kes")}
             </button>
           ) : n.enterprise ? (
-            <button type="button" className={styles.secondary} onClick={onSettings}>
-              {t("Windows ayarlarında bağlan")}
-            </button>
+            <form
+              className={styles.enterprise}
+              onSubmit={(e) => {
+                e.preventDefault();
+                connectEnterprise();
+              }}
+            >
+              <input
+                type="text"
+                autoFocus
+                autoComplete="off"
+                spellCheck={false}
+                placeholder={t("E-posta / kullanıcı adı")}
+                aria-label={t("{ssid} kullanıcı adı", { ssid: n.ssid })}
+                value={username}
+                onChange={(e) => setUsername(e.currentTarget.value)}
+              />
+              <div className={styles.pwRow}>
+                <input
+                  type={showPw ? "text" : "password"}
+                  autoComplete="off"
+                  placeholder={t("Parola")}
+                  aria-label={t("{ssid} parolası", { ssid: n.ssid })}
+                  value={password}
+                  onChange={(e) => setPassword(e.currentTarget.value)}
+                />
+                <button
+                  type="button"
+                  className={styles.secondary}
+                  aria-pressed={showPw}
+                  onClick={() => setShowPw((v) => !v)}
+                >
+                  {showPw ? t("Parolayı gizle") : t("Parolayı göster")}
+                </button>
+              </div>
+              <label className={styles.check}>
+                <input
+                  type="checkbox"
+                  checked={auto}
+                  onChange={(e) => setAuto(e.currentTarget.checked)}
+                />
+                {t("Bağlantıyı otomatik kur")}
+              </label>
+              <button
+                type="submit"
+                className={styles.primary}
+                disabled={busy || !username.trim() || !password}
+              >
+                {busy && <span className={styles.spinner} aria-hidden="true" />}
+                {busy ? t("Bağlanıyor…") : t("Bağlan")}
+              </button>
+            </form>
           ) : askPassword ? (
             <form
               className={styles.password}
@@ -266,6 +348,11 @@ function Network({
             </button>
           )}
           {error && <p className={styles.errorText}>{error}</p>}
+          {certTrust && (
+            <button type="button" className={styles.secondary} onClick={onSettings}>
+              {t("Windows ayarlarında aç")}
+            </button>
+          )}
         </div>
       )}
     </div>

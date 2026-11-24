@@ -19,7 +19,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use windows::Win32::Foundation::{HWND, LPARAM, RECT, WPARAM};
-use windows::Win32::Graphics::Gdi::{CreateRectRgn, GetWindowRgnBox, NULLREGION, SetWindowRgn};
+use windows::Win32::Graphics::Gdi::{
+    CreateRectRgn, DeleteObject, GetWindowRgnBox, HGDIOBJ, NULLREGION, SetWindowRgn,
+};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent};
 use windows::Win32::UI::Shell::{
@@ -74,10 +76,12 @@ pub fn init(config_dir: PathBuf, want_hidden: bool) {
         // Önceki oturum çökmüş ve çubuk gizli kalmış.
         restore(control);
     }
-    std::thread::Builder::new()
+    if let Err(e) = std::thread::Builder::new()
         .name("taskbar-watch".into())
         .spawn(watch)
-        .expect("taskbar-watch başlatılamadı");
+    {
+        eprintln!("taskbar-watch başlatılamadı: {e}");
+    }
 }
 
 pub fn set_hidden(hidden: bool) {
@@ -263,7 +267,11 @@ fn hide_bar(bar: HWND) {
     unsafe {
         let mut box_ = RECT::default();
         if GetWindowRgnBox(bar, &mut box_) != NULLREGION {
-            SetWindowRgn(bar, Some(CreateRectRgn(0, 0, 0, 0)), true);
+            let empty = CreateRectRgn(0, 0, 0, 0);
+            // Başarısızsa bölgenin sahibi hâlâ biziz.
+            if SetWindowRgn(bar, Some(empty), true) == 0 {
+                let _ = DeleteObject(HGDIOBJ(empty.0));
+            }
         }
         if IsWindowVisible(bar).as_bool() {
             let _ = ShowWindowAsync(bar, SW_HIDE);
