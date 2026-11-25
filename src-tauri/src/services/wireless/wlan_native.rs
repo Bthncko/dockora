@@ -2,7 +2,7 @@
 //!
 //! WinRT `ConnectWithPasswordCredentialAsync` bazı ağlarda (UnspecifiedFailure,
 //! Timeout, UnsupportedAuthenticationProtocol) sonuç vermez. Bu yol WPA2/WPA3
-//! kurumsal profili (PEAP + MSCHAPv2) kendisi yazar, kullanıcı bilgilerini
+//! kurumsal profili (PEAP + MSCHAPv2, olmazsa EAP-TTLS + PAP) kendisi yazar, kullanıcı bilgilerini
 //! EapHost kullanıcı verisi olarak verir ve bağlanır. Sunucu sertifikası
 //! doğrulaması KAPATILMAZ: Windows, Ayarlar'dakiyle aynı şekilde güven sorar.
 //!
@@ -10,32 +10,39 @@
 //! diske yazılmaz, kullanımdan sonra sıfırlanır.
 
 use std::ffi::c_void;
-use std::sync::Mutex;
 use std::sync::mpsc::{self, Sender};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use crate::win::wide;
+use windows::core::{GUID, PCWSTR, PWSTR};
 use windows::Win32::Foundation::HANDLE;
 use windows::Win32::NetworkManagement::WiFi::{
-    DOT11_AUTH_ALGO_WPA3_ENT, DOT11_AUTH_ALGO_WPA3_ENT_192, L2_NOTIFICATION_DATA,
-    WLAN_API_VERSION_2_0, WLAN_AVAILABLE_NETWORK_LIST, WLAN_CONNECTION_ATTRIBUTES,
-    WLAN_CONNECTION_NOTIFICATION_DATA, WLAN_CONNECTION_PARAMETERS, WLAN_INTERFACE_INFO_LIST,
-    WLAN_NOTIFICATION_SOURCE_ACM, WLAN_NOTIFICATION_SOURCE_NONE,
-    WLAN_REASON_CODE_MSMSEC_AUTH_START_TIMEOUT, WLAN_REASON_CODE_MSMSEC_AUTH_SUCCESS_TIMEOUT,
-    WLAN_REASON_CODE_MSMSEC_CANCELLED, WLAN_REASON_CODE_MSMSEC_FORCED_FAILURE,
-    WLAN_REASON_CODE_MSMSEC_UI_REQUEST_FAILURE, WLAN_REASON_CODE_SUCCESS, WLAN_SET_EAPHOST_FLAGS,
-    WlanCloseHandle, WlanConnect, WlanDeleteProfile, WlanEnumInterfaces, WlanFreeMemory,
-    WlanGetAvailableNetworkList, WlanGetProfile, WlanOpenHandle, WlanQueryInterface,
-    WlanReasonCodeToString, WlanRegisterNotification, WlanSetProfile,
-    WlanSetProfileEapXmlUserData, dot11_BSS_type_infrastructure, wlan_connection_mode_profile,
-    wlan_interface_state_connected, wlan_intf_opcode_current_connection,
-    wlan_notification_acm_connection_attempt_fail, wlan_notification_acm_connection_complete,
+    dot11_BSS_type_infrastructure, wlan_connection_mode_profile, wlan_interface_state_connected,
+    wlan_intf_opcode_current_connection, wlan_notification_acm_connection_attempt_fail,
+    wlan_notification_acm_connection_complete, WlanCloseHandle, WlanConnect, WlanDeleteProfile,
+    WlanEnumInterfaces, WlanFreeMemory, WlanGetAvailableNetworkList, WlanGetProfile,
+    WlanOpenHandle, WlanQueryInterface, WlanReasonCodeToString, WlanRegisterNotification, WlanScan,
+    WlanSetProfile, WlanSetProfileEapXmlUserData, DOT11_AUTH_ALGO_WPA3_ENT,
+    DOT11_AUTH_ALGO_WPA3_ENT_192, L2_NOTIFICATION_DATA, WLAN_API_VERSION_2_0,
+    WLAN_AVAILABLE_NETWORK_LIST, WLAN_CONNECTION_ATTRIBUTES, WLAN_CONNECTION_NOTIFICATION_DATA,
+    WLAN_CONNECTION_PARAMETERS, WLAN_INTERFACE_INFO_LIST, WLAN_NOTIFICATION_SOURCE_ACM,
+    WLAN_NOTIFICATION_SOURCE_NONE, WLAN_REASON_CODE_MSMSEC_AUTH_START_TIMEOUT,
+    WLAN_REASON_CODE_MSMSEC_AUTH_SUCCESS_TIMEOUT, WLAN_REASON_CODE_MSMSEC_CANCELLED,
+    WLAN_REASON_CODE_MSMSEC_FORCED_FAILURE, WLAN_REASON_CODE_MSMSEC_UI_REQUEST_FAILURE,
+    WLAN_REASON_CODE_SUCCESS, WLAN_SET_EAPHOST_FLAGS,
 };
-use windows::core::{GUID, PCWSTR, PWSTR};
 
 const ERROR_SUCCESS: u32 = 0;
 const ERROR_NOT_FOUND: u32 = 1168;
 const WAIT: Duration = Duration::from_secs(20);
+// 802.1X (OneX) neden kodları (L2_REASON_CODE_ONEX_BASE = 0x50000 tabanlı).
+const ONEX_UI_DISABLED: u32 = 0x5_0003;
+const ONEX_UI_FAILURE: u32 = 0x5_0004;
+const ONEX_EAP_FAILURE_RECEIVED: u32 = 0x5_0005;
+const ONEX_PROFILE_DISALLOWED_EAP_TYPE: u32 = 0x5_000A;
+const ONEX_UI_CANCELLED: u32 = 0x5_0011;
+const ONEX_UI_NOT_PERMITTED: u32 = 0x5_0014;
 
 /// Native yolun sonucu; çağıran Türkçe iletiye çevirir.
 #[derive(Debug, PartialEq, Eq)]
@@ -46,8 +53,41 @@ pub enum NativeError {
     CertTrust,
     /// Ağ görünmüyor.
     NotVisible,
+    /// Sunucu EAP'yi açıkça reddetti: yanlış yöntem (PEAP/TTLS) ya da yanlış bilgi.
+    EapRejected,
     /// Diğer hata (Türkçe ileti).
     Other(String),
+}
+
+/// Kurumsal EAP yöntemi. Kurumlar ikisinden birini kullanır (eduroam'da ikisi de yaygın).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Method {
+    /// PEAP (25) + iç EAP-MSCHAPv2 (26).
+    Peap,
+    /// EAP-TTLS (21, Microsoft yazarı 311) + iç PAP.
+    TtlsPap,
+}
+
+impl Method {
+    fn other(self) -> Self {
+        match self {
+            Method::Peap => Method::TtlsPap,
+            Method::TtlsPap => Method::Peap,
+        }
+    }
+
+    /// Mevcut bir profilin XML'inden yöntemi çıkarır; desteklemediğimiz yöntemse None.
+    fn detect(profile_xml: &str) -> Option<Self> {
+        if profile_xml.contains("EapTtls") && profile_xml.contains("PAPAuthentication") {
+            Some(Method::TtlsPap)
+        } else if profile_xml.contains("MsPeapConnectionPropertiesV1")
+            && profile_xml.contains(">26</")
+        {
+            Some(Method::Peap)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,8 +118,14 @@ fn hex_upper(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02X}")).collect()
 }
 
-/// WLAN profil XML'i: PEAP (25) + iç EAP-MSCHAPv2 (26), sunucu doğrulaması açık.
-pub fn build_profile_xml(ssid: &str, auth: Auth, auto: bool) -> String {
+const PEAP_CONFIG: &str = r#"<EAPConfig><EapHostConfig xmlns="http://www.microsoft.com/provisioning/EapHostConfig" xmlns:eapCommon="http://www.microsoft.com/provisioning/EapCommon" xmlns:baseEap="http://www.microsoft.com/provisioning/BaseEapConnectionPropertiesV1" xmlns:msPeap="http://www.microsoft.com/provisioning/MsPeapConnectionPropertiesV1" xmlns:msChapV2="http://www.microsoft.com/provisioning/MsChapV2ConnectionPropertiesV1"><EapMethod><eapCommon:Type>25</eapCommon:Type><eapCommon:AuthorId>0</eapCommon:AuthorId></EapMethod><Config><baseEap:Eap><baseEap:Type>25</baseEap:Type><msPeap:EapType><msPeap:ServerValidation><msPeap:DisableUserPromptForServerValidation>false</msPeap:DisableUserPromptForServerValidation><msPeap:ServerNames></msPeap:ServerNames></msPeap:ServerValidation><msPeap:FastReconnect>true</msPeap:FastReconnect><msPeap:InnerEapOptional>false</msPeap:InnerEapOptional><baseEap:Eap><baseEap:Type>26</baseEap:Type><msChapV2:EapType><msChapV2:UseWinLogonCredentials>false</msChapV2:UseWinLogonCredentials></msChapV2:EapType></baseEap:Eap><msPeap:EnableQuarantineChecks>false</msPeap:EnableQuarantineChecks><msPeap:RequireCryptoBinding>false</msPeap:RequireCryptoBinding></msPeap:EapType></baseEap:Eap></Config></EapHostConfig></EAPConfig>"#;
+
+// Windows'un kendi kurduğu TTLS profilinin biçimi; sunucu adı / kök CA boş:
+// Windows ilk bağlantıda sertifikayı gösterip güven sorar.
+const TTLS_CONFIG: &str = r#"<EAPConfig><EapHostConfig xmlns="http://www.microsoft.com/provisioning/EapHostConfig"><EapMethod><Type xmlns="http://www.microsoft.com/provisioning/EapCommon">21</Type><VendorId xmlns="http://www.microsoft.com/provisioning/EapCommon">0</VendorId><VendorType xmlns="http://www.microsoft.com/provisioning/EapCommon">0</VendorType><AuthorId xmlns="http://www.microsoft.com/provisioning/EapCommon">311</AuthorId></EapMethod><Config xmlns="http://www.microsoft.com/provisioning/EapHostConfig"><EapTtls xmlns="http://www.microsoft.com/provisioning/EapTtlsConnectionPropertiesV1"><ServerValidation><ServerNames></ServerNames><DisablePrompt>false</DisablePrompt></ServerValidation><Phase2Authentication><PAPAuthentication/></Phase2Authentication><Phase1Identity><IdentityPrivacy>false</IdentityPrivacy></Phase1Identity></EapTtls></Config></EapHostConfig></EAPConfig>"#;
+
+/// WLAN profil XML'i (PEAP-MSCHAPv2 ya da TTLS-PAP), sunucu doğrulaması açık.
+pub fn build_profile_xml(ssid: &str, auth: Auth, auto: bool, method: Method) -> String {
     let name = xml_escape(ssid);
     let hex = hex_upper(ssid.as_bytes());
     let mode = if auto { "auto" } else { "manual" };
@@ -87,15 +133,24 @@ pub fn build_profile_xml(ssid: &str, auth: Auth, auto: bool) -> String {
         Auth::Wpa2 => "WPA2",
         Auth::Wpa3Ent => "WPA3ENT",
     };
+    let eap = match method {
+        Method::Peap => PEAP_CONFIG,
+        Method::TtlsPap => TTLS_CONFIG,
+    };
     format!(
-        r#"<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>{name}</name><SSIDConfig><SSID><hex>{hex}</hex><name>{name}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>{mode}</connectionMode><MSM><security><authEncryption><authentication>{auth}</authentication><encryption>AES</encryption><useOneX>true</useOneX></authEncryption><OneX xmlns="http://www.microsoft.com/networking/OneX/v1"><authMode>user</authMode><EAPConfig><EapHostConfig xmlns="http://www.microsoft.com/provisioning/EapHostConfig" xmlns:eapCommon="http://www.microsoft.com/provisioning/EapCommon" xmlns:baseEap="http://www.microsoft.com/provisioning/BaseEapConnectionPropertiesV1" xmlns:msPeap="http://www.microsoft.com/provisioning/MsPeapConnectionPropertiesV1" xmlns:msChapV2="http://www.microsoft.com/provisioning/MsChapV2ConnectionPropertiesV1"><EapMethod><eapCommon:Type>25</eapCommon:Type><eapCommon:AuthorId>0</eapCommon:AuthorId></EapMethod><Config><baseEap:Eap><baseEap:Type>25</baseEap:Type><msPeap:EapType><msPeap:ServerValidation><msPeap:DisableUserPromptForServerValidation>false</msPeap:DisableUserPromptForServerValidation><msPeap:ServerNames></msPeap:ServerNames></msPeap:ServerValidation><msPeap:FastReconnect>true</msPeap:FastReconnect><msPeap:InnerEapOptional>false</msPeap:InnerEapOptional><baseEap:Eap><baseEap:Type>26</baseEap:Type><msChapV2:EapType><msChapV2:UseWinLogonCredentials>false</msChapV2:UseWinLogonCredentials></msChapV2:EapType></baseEap:Eap><msPeap:EnableQuarantineChecks>false</msPeap:EnableQuarantineChecks><msPeap:RequireCryptoBinding>false</msPeap:RequireCryptoBinding></msPeap:EapType></baseEap:Eap></Config></EapHostConfig></EAPConfig></OneX></security></MSM></WLANProfile>"#
+        r#"<?xml version="1.0"?><WLANProfile xmlns="http://www.microsoft.com/networking/WLAN/profile/v1"><name>{name}</name><SSIDConfig><SSID><hex>{hex}</hex><name>{name}</name></SSID></SSIDConfig><connectionType>ESS</connectionType><connectionMode>{mode}</connectionMode><MSM><security><authEncryption><authentication>{auth}</authentication><encryption>AES</encryption><useOneX>true</useOneX></authEncryption><OneX xmlns="http://www.microsoft.com/networking/OneX/v1"><authMode>user</authMode>{eap}</OneX></security></MSM></WLANProfile>"#
     )
 }
 
-/// EapHost kullanıcı kimlik bilgileri (PEAP içinde MSCHAPv2). Gizli veri içerir.
-fn build_user_data_xml(username: &str, password: &str) -> String {
+/// EapHost kullanıcı kimlik bilgileri. Gizli veri içerir.
+fn build_user_data_xml(username: &str, password: &str, method: Method) -> String {
     let u = xml_escape(username);
     let p = xml_escape(password);
+    if method == Method::TtlsPap {
+        return format!(
+            r#"<?xml version="1.0"?><EapHostUserCredentials xmlns="http://www.microsoft.com/provisioning/EapHostUserCredentials" xmlns:eapCommon="http://www.microsoft.com/provisioning/EapCommon" xmlns:baseEap="http://www.microsoft.com/provisioning/BaseEapMethodUserCredentials"><EapMethod><eapCommon:Type>21</eapCommon:Type><eapCommon:AuthorId>311</eapCommon:AuthorId></EapMethod><Credentials><EapTtls xmlns="http://www.microsoft.com/provisioning/EapTtlsUserPropertiesV1"><Username>{u}</Username><Password>{p}</Password></EapTtls></Credentials></EapHostUserCredentials>"#
+        );
+    }
     format!(
         r#"<?xml version="1.0"?><EapHostUserCredentials xmlns="http://www.microsoft.com/provisioning/EapHostUserCredentials" xmlns:eapCommon="http://www.microsoft.com/provisioning/EapCommon" xmlns:baseEap="http://www.microsoft.com/provisioning/BaseEapUserPropertiesV1" xmlns:MsPeap="http://www.microsoft.com/provisioning/MsPeapUserPropertiesV1" xmlns:MsChapV2="http://www.microsoft.com/provisioning/MsChapV2UserPropertiesV1"><EapMethod><eapCommon:Type>25</eapCommon:Type><eapCommon:AuthorId>0</eapCommon:AuthorId></EapMethod><Credentials><baseEap:Eap><baseEap:Type>25</baseEap:Type><MsPeap:EapType><baseEap:Eap><baseEap:Type>26</baseEap:Type><MsChapV2:EapType><MsChapV2:Username>{u}</MsChapV2:Username><MsChapV2:Password>{p}</MsChapV2:Password><MsChapV2:LogonDomain></MsChapV2:LogonDomain></MsChapV2:EapType></baseEap:Eap></MsPeap:EapType></baseEap:Eap></Credentials></EapHostUserCredentials>"#
     )
@@ -117,6 +172,12 @@ fn classify_reason(reason: u32) -> NativeError {
         // Sunucu kimlik doğrulamayı reddetti / başarı beklenirken zaman aşımı.
         WLAN_REASON_CODE_MSMSEC_AUTH_SUCCESS_TIMEOUT | WLAN_REASON_CODE_MSMSEC_FORCED_FAILURE => {
             NativeError::Credentials
+        }
+        // Sunucu EAP'yi açıkça reddetti ya da profildeki yöntemi kabul etmiyor.
+        ONEX_EAP_FAILURE_RECEIVED | ONEX_PROFILE_DISALLOWED_EAP_TYPE => NativeError::EapRejected,
+        // Windows'un sertifika / kimlik penceresi açılamadı ya da kapatıldı.
+        ONEX_UI_CANCELLED | ONEX_UI_FAILURE | ONEX_UI_DISABLED | ONEX_UI_NOT_PERMITTED => {
+            NativeError::CertTrust
         }
         r => NativeError::Other(format!("Bağlanılamadı: {}", reason_text(r))),
     }
@@ -167,7 +228,46 @@ impl<T> Drop for WlanMem<T> {
 }
 
 /// SSID'yi gören arayüz ve ağın yetkilendirme algoritması.
+/// Ağı bulur; listede yoksa taze tarama ister ve birkaç saniye bekler (Windows'un
+/// önbelleğindeki liste eski olabilir).
 fn find_interface(h: HANDLE, ssid: &str) -> Result<(GUID, Auth), NativeError> {
+    match lookup(h, ssid) {
+        Err(NativeError::NotVisible) => {}
+        other => return other,
+    }
+    request_scan(h);
+    for _ in 0..10 {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        match lookup(h, ssid) {
+            Err(NativeError::NotVisible) => {}
+            other => return other,
+        }
+    }
+    Err(NativeError::NotVisible)
+}
+
+/// Bütün Wi-Fi arayüzlerinde tarama başlatır (sonucu beklemez).
+fn request_scan(h: HANDLE) {
+    let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
+    // SAFETY: çıktı işaretçisi geçerli.
+    if unsafe { WlanEnumInterfaces(h, None, &mut list) } != ERROR_SUCCESS {
+        return;
+    }
+    let list = WlanMem(list);
+    // SAFETY: dwNumberOfItems kadar öğe ardışık.
+    let ifaces = unsafe {
+        std::slice::from_raw_parts(
+            (*list.0).InterfaceInfo.as_ptr(),
+            (*list.0).dwNumberOfItems as usize,
+        )
+    };
+    for iface in ifaces {
+        // SAFETY: geçerli tanıtıcı ve GUID; isteğe bağlı parametreler boş.
+        let _ = unsafe { WlanScan(h, &iface.InterfaceGuid, None, None, None) };
+    }
+}
+
+fn lookup(h: HANDLE, ssid: &str) -> Result<(GUID, Auth), NativeError> {
     let mut list: *mut WLAN_INTERFACE_INFO_LIST = std::ptr::null_mut();
     // SAFETY: çıktı işaretçisi geçerli.
     let rc = unsafe { WlanEnumInterfaces(h, None, &mut list) };
@@ -205,8 +305,7 @@ fn find_interface(h: HANDLE, ssid: &str) -> Result<(GUID, Auth), NativeError> {
             }
             let algo = n.dot11DefaultAuthAlgorithm;
             // RSNA ve bilinmeyenler WPA2/AES; WPA3-Enterprise raporlanırsa WPA3ENT.
-            let auth = if algo == DOT11_AUTH_ALGO_WPA3_ENT || algo == DOT11_AUTH_ALGO_WPA3_ENT_192
-            {
+            let auth = if algo == DOT11_AUTH_ALGO_WPA3_ENT || algo == DOT11_AUTH_ALGO_WPA3_ENT_192 {
                 Auth::Wpa3Ent
             } else {
                 Auth::Wpa2
@@ -217,15 +316,26 @@ fn find_interface(h: HANDLE, ssid: &str) -> Result<(GUID, Auth), NativeError> {
     Err(NativeError::NotVisible)
 }
 
-fn profile_exists(h: HANDLE, guid: &GUID, name: &[u16]) -> bool {
+/// Kayıtlı profilin XML'i (gizli alanlar olmadan); profil yoksa None.
+fn profile_xml(h: HANDLE, guid: &GUID, name: &[u16]) -> Option<String> {
     let mut xml = PWSTR::null();
     // SAFETY: ad sıfır sonlu; çıktı işaretçisi geçerli.
     let rc = unsafe { WlanGetProfile(h, guid, PCWSTR(name.as_ptr()), None, &mut xml, None, None) };
+    let text = if rc == ERROR_SUCCESS && !xml.is_null() {
+        // SAFETY: wlanapi sıfır sonlu geniş dizge döndürdü.
+        unsafe { xml.to_string() }.ok()
+    } else {
+        None
+    };
     if !xml.is_null() {
         // SAFETY: wlanapi belleği.
         unsafe { WlanFreeMemory(xml.0 as *const c_void) };
     }
-    rc != ERROR_NOT_FOUND
+    if rc == ERROR_NOT_FOUND {
+        None
+    } else {
+        Some(text.unwrap_or_default())
+    }
 }
 
 struct Ctx {
@@ -301,48 +411,135 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
 
     let (guid, auth) = find_interface(h, ssid)?;
     let name = wide(ssid);
-    let existed = profile_exists(h, &guid, &name);
+    let existing = profile_xml(h, &guid, &name);
 
-    let mut profile_xml = build_profile_xml(ssid, auth, auto);
-    let profile_w = wide(&profile_xml);
-    wipe_string(&mut profile_xml);
-    let mut reason = 0u32;
-    // SAFETY: tüm dizgiler sıfır sonlu ve çağrı süresince yaşıyor. Aynı adlı profil
-    // varsa üzerine yazılır (Windows'un o ağ için kayıtlı ayarı güncellenir).
-    let rc = unsafe {
-        WlanSetProfile(
-            h,
-            &guid,
-            0,
-            PCWSTR(profile_w.as_ptr()),
-            PCWSTR::null(),
-            true,
-            None,
-            &mut reason,
-        )
+    // Windows'ta bu ağ için tanıdığımız bir profil varsa (ör. Windows'un kendi
+    // algıladığı TTLS profili) onu koru: içindeki öğrenilmiş sunucu adı / kök CA
+    // sayesinde sertifika sorusu çıkmaz. Yalnızca kullanıcı bilgisi önbelleğini aç
+    // (Windows'un profili `cacheUserData=false` ile gelir; o hâlde kullanıcı verisi
+    // kabul edilmez). Sunucu EAP'yi reddederse diğer yöntemle kendi profilimizi yaz.
+    let plan: Vec<(Method, String)> = match existing
+        .as_deref()
+        .and_then(|x| Method::detect(x).map(|m| (m, x)))
+    {
+        Some((m, x)) => vec![
+            (m, patch_existing(x, auto)),
+            (m.other(), build_profile_xml(ssid, auth, auto, m.other())),
+        ],
+        None => vec![
+            (
+                Method::Peap,
+                build_profile_xml(ssid, auth, auto, Method::Peap),
+            ),
+            (
+                Method::TtlsPap,
+                build_profile_xml(ssid, auth, auto, Method::TtlsPap),
+            ),
+        ],
     };
-    if rc != ERROR_SUCCESS {
-        return Err(NativeError::Other(format!(
-            "Wi-Fi profili oluşturulamadı: {}",
-            reason_text(reason)
-        )));
-    }
-    let created = !existed;
-    let cleanup = || {
-        if created {
-            // SAFETY: ad sıfır sonlu.
-            unsafe { WlanDeleteProfile(h, &guid, PCWSTR(name.as_ptr()), None) };
+    let mut outcome = Err(NativeError::EapRejected);
+    for (method, profile) in &plan {
+        outcome = attempt(h, &guid, &name, *method, profile, username, password);
+        super::super::flylog::log(&format!("wifi kurumsal: {method:?} sonucu {outcome:?}"));
+        if outcome != Err(NativeError::EapRejected) {
+            break;
         }
-    };
+    }
+    // Her yöntem açıkça reddedildiyse sorun kullanıcı adı / parola.
+    if outcome == Err(NativeError::EapRejected) {
+        outcome = Err(NativeError::Credentials);
+    }
+    if outcome.is_err() {
+        match &existing {
+            // Üzerine yazdığımız eski profili geri koy.
+            Some(xml) if !xml.is_empty() => {
+                let w = wide(xml);
+                let mut reason = 0u32;
+                // SAFETY: dizgiler sıfır sonlu.
+                unsafe {
+                    WlanSetProfile(
+                        h,
+                        &guid,
+                        0,
+                        PCWSTR(w.as_ptr()),
+                        PCWSTR::null(),
+                        true,
+                        None,
+                        &mut reason,
+                    )
+                };
+            }
+            // Yeni açtığımız profili sil: sonraki deneme temiz başlasın.
+            None => {
+                // SAFETY: ad sıfır sonlu.
+                unsafe { WlanDeleteProfile(h, &guid, PCWSTR(name.as_ptr()), None) };
+            }
+            _ => {}
+        }
+    }
+    outcome
+}
 
-    let mut user_xml = build_user_data_xml(username, password);
+/// Mevcut profili korur; yalnızca kullanıcı verisi önbelleğini ve bağlanma kipini ayarlar.
+fn patch_existing(xml: &str, auto: bool) -> String {
+    let mode = if auto { "auto" } else { "manual" };
+    xml.replace(
+        "<cacheUserData>false</cacheUserData>",
+        "<cacheUserData>true</cacheUserData>",
+    )
+    .replace(
+        "<connectionMode>auto</connectionMode>",
+        &format!("<connectionMode>{mode}</connectionMode>"),
+    )
+    .replace(
+        "<connectionMode>manual</connectionMode>",
+        &format!("<connectionMode>{mode}</connectionMode>"),
+    )
+}
+
+/// Tek deneme: profili yaz, kullanıcı verisini ver, bağlan, sonucu bekle.
+fn attempt(
+    h: HANDLE,
+    guid: &GUID,
+    name: &[u16],
+    method: Method,
+    profile: &str,
+    username: &str,
+    password: &str,
+) -> Result<(), NativeError> {
+    {
+        let profile_w = wide(profile);
+        let mut reason = 0u32;
+        // SAFETY: dizgiler sıfır sonlu ve çağrı süresince yaşıyor. Aynı adlı profil
+        // varsa üzerine yazılır.
+        let rc = unsafe {
+            WlanSetProfile(
+                h,
+                guid,
+                0,
+                PCWSTR(profile_w.as_ptr()),
+                PCWSTR::null(),
+                true,
+                None,
+                &mut reason,
+            )
+        };
+        if rc != ERROR_SUCCESS {
+            return Err(NativeError::Other(format!(
+                "Wi-Fi profili oluşturulamadı: {}",
+                reason_text(reason)
+            )));
+        }
+    }
+
+    let mut user_xml = build_user_data_xml(username, password, method);
     let mut user_w = wide(&user_xml);
     wipe_string(&mut user_xml);
     // SAFETY: dizgiler sıfır sonlu; bayrak 0 = yalnızca geçerli kullanıcı.
     let rc = unsafe {
         WlanSetProfileEapXmlUserData(
             h,
-            &guid,
+            guid,
             PCWSTR(name.as_ptr()),
             WLAN_SET_EAPHOST_FLAGS(0),
             PCWSTR(user_w.as_ptr()),
@@ -351,7 +548,7 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
     };
     user_w.fill(0);
     if rc != ERROR_SUCCESS {
-        cleanup();
+        super::super::flylog::log(&format!("wifi kurumsal: kullanıcı verisi hatası {rc}"));
         return Err(NativeError::Other(
             "Kullanıcı bilgileri kaydedilemedi".into(),
         ));
@@ -360,8 +557,8 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
     let (tx, rx) = mpsc::channel();
     let ctx = Box::new(Ctx {
         tx: Mutex::new(tx),
-        guid,
-        profile: name.clone(),
+        guid: *guid,
+        profile: name.to_vec(),
     });
     // SAFETY: ctx, kayıt silinene kadar yaşar (aşağıda NONE ile kayıt kaldırılır).
     let rc = unsafe {
@@ -376,7 +573,6 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
         )
     };
     if rc != ERROR_SUCCESS {
-        cleanup();
         return Err(NativeError::Other("Bağlantı olayları dinlenemedi".into()));
     }
 
@@ -389,7 +585,7 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
         dwFlags: 0,
     };
     // SAFETY: parametreler çağrı süresince geçerli.
-    let rc = unsafe { WlanConnect(h, &guid, &params, None) };
+    let rc = unsafe { WlanConnect(h, guid, &params, None) };
     let outcome = if rc != ERROR_SUCCESS {
         Err(NativeError::Other("Bağlantı başlatılamadı".into()))
     } else {
@@ -397,7 +593,7 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
             Ok(WLAN_REASON_CODE_SUCCESS) => Ok(()),
             Ok(r) => Err(classify_reason(r)),
             // Olay gelmedi: durumu sorgula; yoksa kullanıcı güven sorusunu yanıtlamadı.
-            Err(_) if is_connected(h, &guid, &name) => Ok(()),
+            Err(_) if is_connected(h, guid, name) => Ok(()),
             Err(_) => Err(NativeError::CertTrust),
         }
     };
@@ -415,11 +611,6 @@ pub fn connect(ssid: &str, username: &str, password: &str, auto: bool) -> Result
         )
     };
     drop(ctx);
-
-    // Yanlış kimlik bilgisiyle yeni açtığımız profili sil: sonraki deneme temiz başlasın.
-    if outcome == Err(NativeError::Credentials) {
-        cleanup();
-    }
     outcome
 }
 
@@ -429,21 +620,21 @@ mod tests {
 
     #[test]
     fn escapes_ssid() {
-        let x = build_profile_xml("A&B <\"x\"> 'y'", Auth::Wpa2, true);
+        let x = build_profile_xml("A&B <\"x\"> 'y'", Auth::Wpa2, true, Method::Peap);
         assert!(x.contains("<name>A&amp;B &lt;&quot;x&quot;&gt; &apos;y&apos;</name>"));
         assert!(!x.contains("A&B"));
     }
 
     #[test]
     fn hex_is_uppercase_utf8() {
-        let x = build_profile_xml("aÇ", Auth::Wpa2, true);
+        let x = build_profile_xml("aÇ", Auth::Wpa2, true, Method::Peap);
         assert!(x.contains("<hex>61C387</hex>"));
     }
 
     #[test]
     fn wpa2_vs_wpa3() {
-        let a = build_profile_xml("n", Auth::Wpa2, true);
-        let b = build_profile_xml("n", Auth::Wpa3Ent, true);
+        let a = build_profile_xml("n", Auth::Wpa2, true, Method::Peap);
+        let b = build_profile_xml("n", Auth::Wpa3Ent, true, Method::Peap);
         assert!(a.contains("<authentication>WPA2</authentication>"));
         assert!(b.contains("<authentication>WPA3ENT</authentication>"));
         assert!(a.contains("<useOneX>true</useOneX>"));
@@ -451,13 +642,15 @@ mod tests {
 
     #[test]
     fn connection_mode_follows_auto() {
-        assert!(build_profile_xml("n", Auth::Wpa2, true).contains("<connectionMode>auto<"));
-        assert!(build_profile_xml("n", Auth::Wpa2, false).contains("<connectionMode>manual<"));
+        assert!(build_profile_xml("n", Auth::Wpa2, true, Method::Peap)
+            .contains("<connectionMode>auto<"));
+        assert!(build_profile_xml("n", Auth::Wpa2, false, Method::Peap)
+            .contains("<connectionMode>manual<"));
     }
 
     #[test]
     fn server_validation_stays_on() {
-        let x = build_profile_xml("n", Auth::Wpa2, true);
+        let x = build_profile_xml("n", Auth::Wpa2, true, Method::Peap);
         assert!(x.contains(">false</msPeap:DisableUserPromptForServerValidation>"));
         assert!(x.contains("<msChapV2:UseWinLogonCredentials>false<"));
         assert!(x.contains("<baseEap:Type>26</baseEap:Type>"));
@@ -465,12 +658,35 @@ mod tests {
 
     #[test]
     fn user_data_escapes_and_wipes() {
-        let mut x = build_user_data_xml("a<b", "p&\"w");
+        let mut x = build_user_data_xml("a<b", "p&\"w", Method::Peap);
         assert!(x.contains("<MsChapV2:Username>a&lt;b<"));
         assert!(x.contains("<MsChapV2:Password>p&amp;&quot;w<"));
         assert!(x.contains("<MsChapV2:LogonDomain></MsChapV2:LogonDomain>"));
         wipe_string(&mut x);
         assert!(x.is_empty());
+    }
+
+    #[test]
+    fn ttls_profile_and_user_data() {
+        let x = build_profile_xml("n", Auth::Wpa2, true, Method::TtlsPap);
+        assert!(x.contains(">21</Type>") && x.contains("<PAPAuthentication/>"));
+        assert!(x.contains("<DisablePrompt>false</DisablePrompt>"));
+        assert_eq!(Method::detect(&x), Some(Method::TtlsPap));
+        assert_eq!(
+            Method::detect(&build_profile_xml("n", Auth::Wpa2, true, Method::Peap)),
+            Some(Method::Peap)
+        );
+        let u = build_user_data_xml("a@b", "p<", Method::TtlsPap);
+        assert!(u.contains("<Username>a@b</Username><Password>p&lt;</Password>"));
+    }
+
+    #[test]
+    fn patch_keeps_trust_and_enables_cache() {
+        let x = "<connectionMode>auto</connectionMode><cacheUserData>false</cacheUserData><TrustedRootCAHash>c4 10</TrustedRootCAHash>";
+        let y = patch_existing(x, false);
+        assert!(y.contains("<cacheUserData>true</cacheUserData>"));
+        assert!(y.contains("<connectionMode>manual</connectionMode>"));
+        assert!(y.contains("<TrustedRootCAHash>c4 10</TrustedRootCAHash>"));
     }
 
     #[test]
@@ -482,6 +698,10 @@ mod tests {
         assert_eq!(
             classify_reason(WLAN_REASON_CODE_MSMSEC_FORCED_FAILURE),
             NativeError::Credentials
+        );
+        assert_eq!(
+            classify_reason(ONEX_EAP_FAILURE_RECEIVED),
+            NativeError::EapRejected
         );
     }
 }

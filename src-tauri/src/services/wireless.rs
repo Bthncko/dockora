@@ -22,6 +22,7 @@ use std::collections::HashMap;
 mod wlan_native;
 
 use serde::Serialize;
+use windows::core::{GUID, HSTRING};
 use windows::Devices::Bluetooth::BluetoothCacheMode;
 use windows::Devices::Bluetooth::GenericAttributeProfile::GattCommunicationStatus;
 use windows::Devices::Bluetooth::{BluetoothConnectionStatus, BluetoothDevice, BluetoothLEDevice};
@@ -30,9 +31,8 @@ use windows::Devices::WiFi::{WiFiAdapter, WiFiConnectionStatus, WiFiReconnection
 use windows::Networking::Connectivity::{NetworkAuthenticationType, NetworkInformation};
 use windows::Security::Credentials::PasswordCredential;
 use windows::Win32::Devices::Bluetooth::{
-    BLUETOOTH_DEVICE_INFO, BluetoothGetDeviceInfo, BluetoothSetServiceState,
+    BluetoothGetDeviceInfo, BluetoothSetServiceState, BLUETOOTH_DEVICE_INFO,
 };
-use windows::core::{GUID, HSTRING};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -74,14 +74,22 @@ fn adapter() -> Result<WiFiAdapter, String> {
         .map_err(|_| "Wi-Fi bağdaştırıcısı yok".to_string())
 }
 
-/// Tarar ve ağları (aynı ad bir kez, en güçlü sinyalle) döndürür.
-pub fn scan() -> Result<Vec<WifiNetwork>, String> {
+/// Ağları (aynı ad bir kez, en güçlü sinyalle) döndürür. `fresh` false ise
+/// taramadan önce bağdaştırıcının önbellekteki listesi anında döner; true ise
+/// yeni tarama beklenir (en çok 8 sn; zaman aşımında eldeki liste kullanılır).
+pub fn scan(fresh: bool) -> Result<Vec<WifiNetwork>, String> {
     com();
     let adapter = adapter()?;
-    adapter
-        .ScanAsync()
-        .and_then(|o| o.join())
-        .map_err(|e| e.message())?;
+    if fresh && let Ok(op) = adapter.ScanAsync() {
+        let start = std::time::Instant::now();
+        while op.Status().is_ok_and(|s| s.0 == 0) {
+            if start.elapsed() > std::time::Duration::from_secs(8) {
+                let _ = op.Cancel();
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
     let report = adapter
         .NetworkReport()
         .and_then(|r| r.AvailableNetworks())
@@ -172,25 +180,30 @@ pub fn connect_enterprise(
         return Err("Kullanıcı adı ve parola gerekli".into());
     }
     let username = username.trim();
-    // Önce WinRT; bu yol sonuç vermezse (belirsiz hata, zaman aşımı, desteklenmeyen
-    // protokol ya da WinRT hatası) Native WiFi yedek yoluna düşülür. Kimlik
-    // bilgisi reddi ve erişim engeli kesin sonuçtur, yedek denenmez.
-    match winrt_connect(ssid, Some(username), Some(password), auto) {
-        Ok(
-            status @ (WiFiConnectionStatus::Success
-            | WiFiConnectionStatus::InvalidCredential
-            | WiFiConnectionStatus::AccessRevoked
-            | WiFiConnectionStatus::NetworkNotAvailable),
-        ) => status_result(status, false, true),
-        Ok(_) | Err(_) => match wlan_native::connect(ssid, username, password, auto) {
-            Ok(()) => Ok(()),
-            Err(wlan_native::NativeError::Credentials) => {
-                Err("Kullanıcı adı ya da parola yanlış".into())
+    // Önce Native WiFi: Windows'un kayıtlı profilini (öğrenilmiş sertifika güveniyle)
+    // korur, PEAP ve TTLS'yi dener. WinRT yalnızca beklenmeyen bir hatada denenir:
+    // yöntemi bilmeden EAP başlatıp sunucudan ret alabiliyor.
+    let native = wlan_native::connect(ssid, username, password, auto);
+    super::flylog::log(&format!("wifi kurumsal: native sonucu {native:?}"));
+    match native {
+        Ok(()) => Ok(()),
+        Err(wlan_native::NativeError::Credentials | wlan_native::NativeError::EapRejected) => {
+            Err("Kullanıcı adı ya da parola yanlış".into())
+        }
+        Err(wlan_native::NativeError::CertTrust) => Err("cert_trust".into()),
+        Err(wlan_native::NativeError::NotVisible) => Err("Ağ artık görünmüyor".into()),
+        Err(wlan_native::NativeError::Other(m)) => {
+            let winrt = winrt_connect(ssid, Some(username), Some(password), auto);
+            super::flylog::log(&format!("wifi kurumsal: WinRT sonucu {winrt:?}"));
+            match winrt {
+                Ok(WiFiConnectionStatus::Success) => Ok(()),
+                Ok(
+                    status @ (WiFiConnectionStatus::InvalidCredential
+                    | WiFiConnectionStatus::AccessRevoked),
+                ) => status_result(status, false, true),
+                _ => Err(m),
             }
-            Err(wlan_native::NativeError::CertTrust) => Err("cert_trust".into()),
-            Err(wlan_native::NativeError::NotVisible) => Err("Ağ artık görünmüyor".into()),
-            Err(wlan_native::NativeError::Other(m)) => Err(m),
-        },
+        }
     }
 }
 
@@ -211,9 +224,7 @@ fn status_result(
 ) -> Result<(), String> {
     match status {
         WiFiConnectionStatus::Success => Ok(()),
-        WiFiConnectionStatus::InvalidCredential if no_password => {
-            Err("password_required".into())
-        }
+        WiFiConnectionStatus::InvalidCredential if no_password => Err("password_required".into()),
         WiFiConnectionStatus::InvalidCredential if enterprise => {
             Err("Kullanıcı adı ya da parola yanlış".into())
         }

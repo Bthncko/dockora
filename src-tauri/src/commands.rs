@@ -633,8 +633,9 @@ async fn blocking_str<T: Send + 'static>(
 }
 
 #[tauri::command]
-pub async fn wifi_scan() -> CmdResult<Vec<wireless::WifiNetwork>> {
-    blocking_str(wireless::scan).await
+pub async fn wifi_scan(fresh: Option<bool>) -> CmdResult<Vec<wireless::WifiNetwork>> {
+    let fresh = fresh.unwrap_or(true);
+    blocking_str(move || wireless::scan(fresh)).await
 }
 
 /// `password` yoksa ve ağ şifre isterse hata "password_required".

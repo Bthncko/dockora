@@ -642,7 +642,8 @@ export const commands = {
   trayClick: (id: string, button: "left" | "double" | "right") =>
     invoke<void>("tray_click", { id, button }),
   /** Tarama birkaç saniye sürer. */
-  wifiScan: () => invoke<WifiNetwork[]>("wifi_scan"),
+  /** `fresh: false` önbellekteki listeyi anında verir; true yeni tarama bekler. */
+  wifiScan: (fresh = true) => invoke<WifiNetwork[]>("wifi_scan", { fresh }),
   /** Şifre isteyen kayıtsız ağda `password` yoksa hata "password_required". */
   wifiConnect: (ssid: string, password?: string) =>
     invoke<void>("wifi_connect", { ssid, password: password ?? null }),

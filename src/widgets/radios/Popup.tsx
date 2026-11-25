@@ -53,8 +53,16 @@ function WifiPanel() {
   useEffect(() => {
     if (!on) return;
     let alive = true;
+    // Önce önbellekteki liste anında gösterilir; yeni tarama bitince yerinde güncellenir.
     commands
-      .wifiScan()
+      .wifiScan(false)
+      .then(
+        (list) =>
+          alive && list.length > 0 && setResult((r) => (r.key === key ? r : { ...r, list })),
+      )
+      .catch(() => {});
+    commands
+      .wifiScan(true)
       .then((list) => alive && setResult({ key, list, error: null }))
       .catch((e) => alive && setResult((r) => ({ key, list: r.list, error: errText(e) })));
     return () => {
