@@ -9,7 +9,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
@@ -398,15 +398,24 @@ pub fn handle_menu_event(app: &AppHandle, menu_id: &str) {
 // Yoklayıcı
 // ---------------------------------------------------------------------------
 
+/// (exe, aumid, ilk görülme).
+type WindowIdentity = (Option<String>, Option<String>, Instant);
+
 #[derive(Default)]
 struct PollerCache {
-    /// (hwnd, pid) → (exe, aumid). Pencere yaşadıkça bunlar değişmez.
-    windows: HashMap<(isize, u32), (Option<String>, Option<String>)>,
+    /// (hwnd, pid) → (exe, aumid, ilk görülme). Pencere yaşadıkça bunlar değişmez;
+    /// yalnızca AUMID'siz pencere ilk saniyelerde yeniden sorulur (bkz. `AUMID_GRACE`).
+    windows: HashMap<(isize, u32), WindowIdentity>,
     meta: HashMap<String, AppMeta>,
     /// Sabitlenmemiş açık uygulamaların ilk görülme sırası (ikonlar zıplamasın).
     order: Vec<String>,
     last_foreground: isize,
 }
+
+/// Bazı uygulamalar pencerenin AUMID'sini pencere açıldıktan sonra yazar (ör.
+/// Firefox web uygulamaları: `-taskbar-tab`). Bu süre boyunca AUMID'siz pencere
+/// yeniden sorulur; yoksa o pencere tarayıcının grubunda kalırdı.
+const AUMID_GRACE: Duration = Duration::from_secs(15);
 
 pub fn spawn_poller(app: AppHandle, wake: Receiver<()>) {
     let spawned = std::thread::Builder::new()
@@ -466,15 +475,15 @@ fn build(app: &AppHandle, cache: &mut PollerCache) -> (Vec<AppItem>, HashMap<Str
     let mut groups: HashMap<String, Vec<WindowInfo>> = HashMap::new();
     let mut seen_order: Vec<String> = Vec::new();
     for raw in raws {
-        let (exe, aumid) = cache
-            .windows
-            .entry((raw.hwnd, raw.pid))
-            .or_insert_with(|| {
-                // Önce pencereye yazılmış AUMID, yoksa paketli sürecin kimliği.
-                let aumid = window_aumid(raw.hwnd).or_else(|| process_aumid(raw.pid));
-                (process_image(raw.pid), aumid)
-            })
-            .clone();
+        let entry = cache.windows.entry((raw.hwnd, raw.pid)).or_insert_with(|| {
+            // Önce pencereye yazılmış AUMID, yoksa paketli sürecin kimliği.
+            let aumid = window_aumid(raw.hwnd).or_else(|| process_aumid(raw.pid));
+            (process_image(raw.pid), aumid, Instant::now())
+        });
+        if entry.1.is_none() && entry.2.elapsed() < AUMID_GRACE {
+            entry.1 = window_aumid(raw.hwnd);
+        }
+        let (exe, aumid) = (entry.0.clone(), entry.1.clone());
         // Gruplama anahtarı: AUMID varsa o, yoksa küçük harfli exe yolu.
         let id = match (&aumid, &exe) {
             (Some(a), _) => a.clone(),
