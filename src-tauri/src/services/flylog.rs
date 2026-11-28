@@ -22,6 +22,11 @@ pub fn uptime_secs() -> u64 {
     (unsafe { GetTickCount64() }) / 1000
 }
 
+/// Günlüğün bulunduğu klasör (ayar klasörü).
+pub fn dir() -> Option<PathBuf> {
+    PATH.get().and_then(|p| p.parent().map(PathBuf::from))
+}
+
 pub fn init(dir: PathBuf) {
     let path = dir.join(FILE);
     let _ = fs::create_dir_all(&dir);

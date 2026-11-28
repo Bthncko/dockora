@@ -120,7 +120,7 @@ impl Default for FlyoutsConfig {
                 y: 12.0,
             },
             monitor: "primary".into(),
-            hide_in_fullscreen: true,
+            hide_in_fullscreen: false,
             animation_speed: 1.0,
             easing: "quad".into(),
             album_accent: false,

@@ -149,6 +149,22 @@ pub fn busy() -> (bool, Option<i32>) {
     }
 }
 
+/// Özel (exclusive) tam ekran D3D uygulaması önde mi. Bu kipte üstüne çıkan her
+/// pencere oyunu tam ekrandan düşürür (Windows oyunu küçültür, Alt+Tab gibi
+/// görünür) ve kart zaten görünmez; bu yüzden ayardan bağımsız gösterilmez.
+pub fn exclusive_fullscreen() -> bool {
+    matches!(
+        unsafe { SHQueryUserNotificationState() },
+        Ok(QUNS_RUNNING_D3D_FULL_SCREEN)
+    )
+}
+
+/// Bildirim kartı da oyunu küçültür mü (özel tam ekran ya da listedeki oyun).
+pub fn cards_unsafe() -> bool {
+    exclusive_fullscreen()
+        || (busy().0 && knockout::foreground().is_some_and(|(_, exe)| knockout::known(&exe)))
+}
+
 /// Config'e göre kart gösterilebilir mi; gösterilebilirse `flyout:show` yayınlar.
 /// `app_id`: medya kartlarında oturumun uygulaması (uygulama süzgeci için).
 pub fn show(app: &AppHandle, payload: Show, app_id: Option<&str>) -> bool {
@@ -188,6 +204,24 @@ pub fn show(app: &AppHandle, payload: Show, app_id: Option<&str>) -> bool {
         log(&format!("show {kind}: reddedildi (uygulama süzgeci, {id})"));
         return false;
     }
+    if exclusive_fullscreen() {
+        log(&format!("show {kind}: reddedildi (özel tam ekran oyun)"));
+        return false;
+    }
+    // Tam ekran bir uygulama önde: daha önce kartla küçülen bir oyunsa gösterme;
+    // değilse kart sonrası küçülüp küçülmediğini izle.
+    let watch = match busy() {
+        (true, _) => knockout::foreground(),
+        _ => None,
+    };
+    if let Some((_, exe)) = &watch
+        && knockout::known(exe)
+    {
+        log(&format!(
+            "show {kind}: reddedildi (kart {exe} oyununu küçültüyor)"
+        ));
+        return false;
+    }
     if cfg.hide_in_fullscreen {
         let (suppress, quns) = busy();
         if suppress {
@@ -205,6 +239,9 @@ pub fn show(app: &AppHandle, payload: Show, app_id: Option<&str>) -> bool {
     match app.emit_to(LABEL, FLYOUT_SHOW, &payload) {
         Ok(()) => {
             log(&format!("show {kind}: gönderildi"));
+            if let Some((hwnd, exe)) = watch {
+                knockout::watch(hwnd, exe);
+            }
             true
         }
         Err(e) => {
@@ -338,5 +375,106 @@ mod tests {
         })
         .unwrap();
         assert_eq!(v["trigger"], "mediaKey");
+    }
+}
+
+/// Kart çıkınca küçülen (tam ekrandan düşen) oyunlar. Bazı oyunlar Windows 11'de
+/// "tam ekran iyileştirmeleri" altında çalıştığı için özel tam ekran gibi
+/// görünmez ama üstlerine pencere çıkınca kendilerini küçültür (Alt+Tab gibi).
+/// Bu oyunlar `flyout-skip.txt` dosyasına (ayar klasörü, satır başına bir exe)
+/// yazılır ve orada bir daha kart gösterilmez; dosyadan silmek yeterli.
+mod knockout {
+    use std::collections::HashSet;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use windows::Win32::Foundation::{CloseHandle, HWND};
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+        QueryFullProcessImageNameW,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId, IsIconic,
+    };
+    use windows::core::PWSTR;
+
+    use crate::services::flylog::{self, log};
+
+    const FILE: &str = "flyout-skip.txt";
+    static SET: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+    fn with<R>(f: impl FnOnce(&mut HashSet<String>) -> R) -> R {
+        let mut g = SET.lock().unwrap_or_else(|e| e.into_inner());
+        let set = g.get_or_insert_with(|| {
+            flylog::dir()
+                .and_then(|d| std::fs::read_to_string(d.join(FILE)).ok())
+                .map(|t| {
+                    t.lines()
+                        .map(|l| l.trim().to_lowercase())
+                        .filter(|l| !l.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        });
+        f(set)
+    }
+
+    pub fn known(exe: &str) -> bool {
+        with(|s| s.contains(exe))
+    }
+
+    /// Öndeki pencere ve exe adı (küçük harf).
+    pub fn foreground() -> Option<(isize, String)> {
+        unsafe {
+            let hwnd = GetForegroundWindow();
+            if hwnd.is_invalid() {
+                return None;
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid).ok()?;
+            let mut buf = [0u16; 512];
+            let mut len = buf.len() as u32;
+            let ok = QueryFullProcessImageNameW(
+                h,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut len,
+            );
+            let _ = CloseHandle(h);
+            ok.ok()?;
+            let path = String::from_utf16_lossy(&buf[..len as usize]);
+            let name = std::path::Path::new(&path)
+                .file_name()?
+                .to_string_lossy()
+                .to_lowercase();
+            Some((hwnd.0 as isize, name))
+        }
+    }
+
+    /// Kart çıktıktan kısa süre sonra oyun küçüldüyse listeye ekle.
+    pub fn watch(hwnd: isize, exe: String) {
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(900));
+            let minimized = unsafe { IsIconic(HWND(hwnd as *mut _)) }.as_bool();
+            if !minimized || !with(|s| s.insert(exe.clone())) {
+                return;
+            }
+            log(&format!(
+                "kart {exe} oyununu küçülttü: bu oyunda kart gösterilmeyecek"
+            ));
+            if let Some(d) = flylog::dir() {
+                let text = with(|s| {
+                    let mut v: Vec<_> = s.iter().cloned().collect();
+                    v.sort();
+                    v.join(
+                        "
+",
+                    ) + "
+"
+                });
+                let _ = std::fs::write(d.join(FILE), text);
+            }
+        });
     }
 }

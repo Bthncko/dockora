@@ -486,8 +486,10 @@ fn run(app: AppHandle) {
         for n in &list {
             let Ok(id) = n.Id() else { continue };
             now.insert(id);
+            // Özel tam ekran oyunda kart oyunu küçültür: bildirim merkezde kalır.
             if primed
                 && !seen.contains(&id)
+                && !crate::win::flyout::cards_unsafe()
                 && let Some(notice) = notice(n, id)
             {
                 crate::win::notify::before_show(&app);
